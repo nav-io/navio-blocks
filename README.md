@@ -13,7 +13,7 @@ navio-blocks/
 │   └── frontend/      React SPA with cyberpunk UI
 ```
 
-**Indexer** connects to a running `naviod` node via JSON-RPC, syncs blocks/transactions into a local SQLite database, and periodically fetches peer geolocation data and price info from CoinGecko.
+**Indexer** connects to a running `naviod` node via JSON-RPC, syncs blocks/transactions into a local SQLite database, and periodically fetches peer geolocation data and price info from MEXC.
 
 **API** serves read-only data from SQLite, proxies live mempool data from `naviod`, and in production serves the frontend static build.
 
