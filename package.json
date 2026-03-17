@@ -1,0 +1,26 @@
+{
+  "name": "navio-blocks",
+  "private": true,
+  "workspaces": [
+    "packages/shared",
+    "packages/indexer",
+    "packages/api",
+    "packages/frontend"
+  ],
+  "scripts": {
+    "build:shared": "npm -w packages/shared run build",
+    "dev:indexer": "npm -w packages/indexer run dev",
+    "dev:api": "npm -w packages/api run dev",
+    "dev:frontend": "npm -w packages/frontend run dev",
+    "dev": "concurrently -n IDX,API,WEB -c blue,green,magenta \"npm:dev:indexer\" \"npm:dev:api\" \"npm:dev:frontend\"",
+    "build": "npm -w packages/shared run build && npm -w packages/indexer run build && npm -w packages/api run build && npm -w packages/frontend run build",
+    "start": "concurrently -n IDX,API -c blue,green \"npm:start:indexer\" \"npm:start:api\"",
+    "start:indexer": "npm -w packages/indexer run start",
+    "start:api": "npm -w packages/api run start",
+    "reindex": "npm -w packages/indexer run reindex",
+    "reindex:from": "npm -w packages/indexer run reindex:from --"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

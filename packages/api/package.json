@@ -1,0 +1,25 @@
+{
+  "name": "@navio-blocks/api",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.0",
+    "@fastify/static": "^9.0.0",
+    "@fastify/swagger": "^9.0.0",
+    "@fastify/swagger-ui": "^5.0.0",
+    "@navio-blocks/shared": "*",
+    "better-sqlite3": "^11.0.0",
+    "dotenv": "^16.4.0",
+    "fastify": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  }
+}
