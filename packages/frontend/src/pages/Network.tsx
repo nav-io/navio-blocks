@@ -1,12 +1,13 @@
+import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { useApi } from '../hooks/useApi';
-import { formatNumber } from '../utils';
+import { formatNumber, truncateHash, timeAgo } from '../utils';
 import GlowCard from '../components/GlowCard';
 import StatCard from '../components/StatCard';
 import Loader from '../components/Loader';
 import TimeAgo from '../components/TimeAgo';
 import NodeMap from '../components/NodeMap';
-import type { NodeStats, NodeMapData } from '@navio-blocks/shared';
+import type { NodeStats, NodeMapData, StakingInfo } from '@navio-blocks/shared';
 
 function VersionBars({ versions }: { versions: { version: string; count: number }[] }) {
   const top = versions.slice(0, 8);
@@ -68,6 +69,89 @@ function CountryBars({ countries }: { countries: { country: string; count: numbe
   );
 }
 
+function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '--';
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  if (days > 365) return `${(days / 365).toFixed(1)}y`;
+  if (days > 30) return `${(days / 30).toFixed(1)}mo`;
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h`;
+  const mins = Math.floor(seconds / 60);
+  return `${mins}m`;
+}
+
+function StakingSection({ staking }: { staking: StakingInfo }) {
+  return (
+    <div className="space-y-4">
+      {/* Staking stat cards */}
+
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Age range */}
+        <GlowCard hover={false}>
+          <h3 className="text-sm font-semibold uppercase tracking-wider text-white/60 mb-4">
+            Stake Age Overview
+          </h3>
+          {staking.oldest_stake_timestamp > 0 ? (
+            <div className="mt-4 pt-3 border-t border-white/5 grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-white/30 mb-0.5">Oldest Active Stake</p>
+                <span className="font-mono text-xs text-white/70">{timeAgo(staking.oldest_stake_timestamp)}</span>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-white/30 mb-0.5">Newest Stake</p>
+                <span className="font-mono text-xs text-white/70">{timeAgo(staking.newest_stake_timestamp)}</span>
+              </div>
+            </div>
+          ) : (
+            <p className="text-white/30 text-sm py-4 text-center">No active stakes found.</p>
+          )}
+        </GlowCard>
+
+        {/* Stake list */}
+        <GlowCard hover={false}>
+          <h3 className="text-sm font-semibold uppercase tracking-wider text-white/60 mb-4">
+            Active Stakes
+          </h3>
+          {staking.top_stakes.length > 0 ? (
+            <div className="space-y-0">
+              {staking.top_stakes.map((s, i) => (
+                <div
+                  key={s.output_hash}
+                  className="flex items-center justify-between py-2.5 border-b border-white/5 last:border-b-0"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="text-xs font-mono text-white/30 w-5 text-right shrink-0">{i + 1}</span>
+                    <Link
+                      to={`/output/${s.output_hash}`}
+                      className="font-mono text-xs text-neon-blue hover:text-neon-purple transition-colors truncate"
+                      title={s.output_hash}
+                    >
+                      {truncateHash(s.output_hash, 8)}
+                    </Link>
+                  </div>
+                  <div className="ml-2 shrink-0">
+                    <span className="text-[10px] text-white/40 w-16 text-right block" title={`Block #${s.block_height}`}>
+                      {formatDuration(s.age_seconds)} old
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-white/30 text-sm py-4 text-center">No active stakes found.</p>
+          )}
+        </GlowCard>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-2 gap-4">
+        <StatCard label="Avg Stake Age" value={formatDuration(staking.avg_stake_age_seconds)} />
+        <StatCard label="Active Stakes" value={formatNumber(staking.active_stakes)} />
+      </div>
+    </div>
+  );
+}
+
 function SkeletonRow() {
   return (
     <tr className="border-b border-white/5">
@@ -87,6 +171,10 @@ export default function Network() {
   );
   const { data: mapData, loading: mapLoading } = useApi<NodeMapData>(
     () => api.getNodeMap(),
+    [],
+  );
+  const { data: stakingData, loading: stakingLoading } = useApi<StakingInfo>(
+    () => api.getStaking(),
     [],
   );
 
@@ -163,6 +251,7 @@ export default function Network() {
         </GlowCard>
       </div>
 
+
       {/* Error state */}
       {statsError && (
         <GlowCard hover={false}>
@@ -236,6 +325,21 @@ export default function Network() {
           </table>
         </div>
       </GlowCard>
+      {/* Staking Tracker */}
+      <div className="space-y-2">
+        <h2 className="text-xl font-bold text-white">Staking Tracker</h2>
+        <p className="text-xs text-white/40">Active staked commitment outputs on the network.</p>
+      </div>
+      {stakingLoading ? (
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          {Array.from({ length: 3 }, (_, i) => (
+            <div key={i} className="glow-card"><div className="skeleton h-12 rounded" /></div>
+          ))}
+        </div>
+      ) : stakingData ? (
+        <StakingSection staking={stakingData} />
+      ) : null}
+
     </div>
   );
 }

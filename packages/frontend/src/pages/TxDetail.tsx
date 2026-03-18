@@ -2,9 +2,10 @@ import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api';
 import { useApi } from '../hooks/useApi';
-import { satsToCoin, truncateHash, formatNumber, formatBytes } from '../utils';
+import { satsToCoin, truncateHash, formatNumber, formatBytes, isRealToken } from '../utils';
 import GlowCard from '../components/GlowCard';
 import PrivacyBadge from '../components/PrivacyBadge';
+import OutputTypeBadge from '../components/OutputTypeBadge';
 import CopyButton from '../components/CopyButton';
 import Loader from '../components/Loader';
 import type { TransactionDetail as TxDetailType, Input, Output, BlockSupply } from '@navio-blocks/shared';
@@ -57,8 +58,9 @@ function InputRow({ input, index }: { input: Input; index: number }) {
 }
 
 function OutputRow({ output, index }: { output: Output; index: number }) {
-  const isFeeLike = !output.is_blsct && (output.value_sat ?? 0) > 0;
   const isSpent = Boolean(output.spent);
+  const isFeeType = output.output_type === 'fee';
+  const spkDimmed = output.spk_hex === '51';
 
   return (
     <div className="py-3 border-b border-white/5 last:border-b-0">
@@ -68,12 +70,12 @@ function OutputRow({ output, index }: { output: Output; index: number }) {
         </span>
         <div className="flex-1 min-w-0">
           <div className="space-y-1.5">
-            <div className="flex items-center gap-2 min-w-0">
+            <div className="flex items-center gap-2 min-w-0 flex-wrap">
               <span className="text-[10px] uppercase tracking-wider text-white/30 shrink-0">Hash</span>
               {output.output_hash ? (
                 <>
                   <Link
-                    to={`/tx/${output.output_hash}`}
+                    to={`/output/${output.output_hash}`}
                     className="font-mono text-sm text-neon-blue hover:text-neon-purple truncate"
                     title={output.output_hash}
                   >
@@ -84,10 +86,15 @@ function OutputRow({ output, index }: { output: Output; index: number }) {
               ) : (
                 <span className="font-mono text-sm text-white/40 italic">No output hash</span>
               )}
+              {output.output_type && <OutputTypeBadge type={output.output_type} />}
               {output.is_blsct && <PrivacyBadge isBlsct />}
-              {isFeeLike && (
-                <span className="inline-block rounded bg-amber-500/20 px-2 py-0.5 text-xs font-mono font-medium text-amber-300 border border-amber-500/30">
-                  Fee Output
+              {isRealToken(output.token_id) && (
+                <span className={`inline-block rounded px-2 py-0.5 text-xs font-mono font-medium border ${
+                  output.token_id!.includes('#')
+                    ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
+                    : 'bg-teal-500/20 text-teal-300 border-teal-500/30'
+                }`}>
+                  {output.token_id!.includes('#') ? 'NFT' : 'Token'}
                 </span>
               )}
             </div>
@@ -98,7 +105,23 @@ function OutputRow({ output, index }: { output: Output; index: number }) {
               </div>
             )}
 
-            {!isFeeLike ? (
+            {isRealToken(output.token_id) && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] uppercase tracking-wider text-white/30 shrink-0">Token</span>
+                <span className="font-mono text-xs text-white/60">{truncateHash(output.token_id!, 10)}</span>
+              </div>
+            )}
+
+            {output.spk_hex && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] uppercase tracking-wider text-white/30 shrink-0">Script</span>
+                <span className={`font-mono text-xs truncate ${spkDimmed ? 'text-white/20' : 'text-white/50'}`} title={output.spk_hex}>
+                  {output.spk_type ?? ''}{output.spk_type && output.spk_hex ? ' · ' : ''}{truncateHash(output.spk_hex, 8)}
+                </span>
+              </div>
+            )}
+
+            {!isFeeType && (
               <div className="flex items-center gap-2 min-w-0">
                 <span
                   className={`inline-block rounded px-2 py-0.5 text-xs font-mono font-medium border ${isSpent
@@ -122,7 +145,7 @@ function OutputRow({ output, index }: { output: Output; index: number }) {
                   </div>
                 ) : null}
               </div>
-            ) : null}
+            )}
           </div>
         </div>
       </div>

@@ -27,6 +27,32 @@ export const api = {
     fetchJSON<import('@navio-blocks/shared').PaginatedResponse<import('@navio-blocks/shared').LatestOutput>>(
       `/outputs?limit=${limit}&offset=${offset}`
     ),
+  getOutput: (hash: string) =>
+    fetchJSON<import('@navio-blocks/shared').OutputDetail>(`/outputs/${hash}`),
+  getOutputs: (limit = 20, offset = 0, type?: string, tokenId?: string, tokenMode?: string, all?: string, spent?: string) => {
+    const params = new URLSearchParams();
+    params.set('limit', String(limit));
+    params.set('offset', String(offset));
+    if (type) params.set('type', type);
+    if (tokenId) params.set('token_id', tokenId);
+    if (tokenMode) params.set('token_mode', tokenMode);
+    if (all) params.set('all', all);
+    if (spent) params.set('spent', spent);
+    return fetchJSON<import('@navio-blocks/shared').PaginatedResponse<import('@navio-blocks/shared').LatestOutput>>(
+      `/outputs?${params.toString()}`
+    );
+  },
+  getOutputTypeStats: (includeCoinbase = false, period = '30d') => {
+    const params = new URLSearchParams();
+    if (includeCoinbase) params.set('include_coinbase', '1');
+    if (period) params.set('period', period);
+    const qs = params.toString();
+    return fetchJSON<import('@navio-blocks/shared').OutputTypeStats[]>(
+      `/outputs/stats${qs ? `?${qs}` : ''}`
+    );
+  },
+  getStaking: () =>
+    fetchJSON<import('@navio-blocks/shared').StakingInfo>('/staking'),
 
   // Search
   search: (q: string) =>

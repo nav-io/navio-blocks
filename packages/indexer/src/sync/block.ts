@@ -1,4 +1,4 @@
-import type { Block, Transaction, Output, Input, NetworkType } from "@navio-blocks/shared";
+import type { Block, Transaction, Output, Input, NetworkType, OutputType } from "@navio-blocks/shared";
 import { getExpectedBlockReward } from "./supply.js";
 
 interface BlockFees {
@@ -85,6 +85,87 @@ function toRawJson(value: unknown): string | null {
   } catch {
     return null;
   }
+}
+
+function extractTokenId(rpcVout: Record<string, unknown>): string | undefined {
+  // tokenId can be on the vout directly or inside scriptPubKey
+  const candidates: unknown[] = [
+    rpcVout.tokenId,
+    rpcVout.token_id,
+    (rpcVout.scriptPubKey as Record<string, unknown> | undefined)?.tokenId,
+    (rpcVout.scriptPubKey as Record<string, unknown> | undefined)?.token_id,
+  ];
+  for (const c of candidates) {
+    if (typeof c === "string" && c.length > 0) return c;
+  }
+  return undefined;
+}
+
+function extractSpkFields(rpcVout: Record<string, unknown>): {
+  spk_type?: string;
+  spk_hex?: string;
+  spk_asm?: string;
+} {
+  const spk = rpcVout.scriptPubKey as Record<string, unknown> | undefined;
+  if (!spk) return {};
+  return {
+    spk_type: typeof spk.type === "string" ? spk.type : undefined,
+    spk_hex: typeof spk.hex === "string" ? spk.hex : undefined,
+    spk_asm: typeof spk.asm === "string" ? spk.asm : undefined,
+  };
+}
+
+const NATIVE_TOKEN_ID = "0000000000000000000000000000000000000000000000000000000000000000";
+
+function isNativeTokenId(tokenId: string | undefined): boolean {
+  if (!tokenId) return false;
+  return tokenId.replace(/#.*$/, "") === NATIVE_TOKEN_ID;
+}
+
+function classifyOutputType(
+  rpcVout: Record<string, unknown>,
+  isCoinbaseTx: boolean,
+  _isBlsct: boolean,
+  tokenId: string | undefined,
+): OutputType {
+  const { spk_type, spk_asm } = extractSpkFields(rpcVout);
+  const val = satoshis(rpcVout.value);
+
+  // 1. Coinbase tx outputs
+  if (isCoinbaseTx) return "coinbase";
+
+  // 2. Fee output: nulldata/fee type with value > 0
+  if ((spk_type === "nulldata" || spk_type === "fee") && val > 0) return "fee";
+
+  // 3. Zero-value nulldata/fee → fee with 0 value (still a fee-type script, skip)
+  //    These are OP_RETURN data carriers; classify as fee (unspendable)
+  if (spk_type === "nulldata" || spk_type === "fee") return "fee";
+
+  // 4. Staking commitment
+  if (spk_asm && spk_asm.startsWith("OP_STAKED_COMMITMENT")) return "stake";
+
+  // 5. HTLC (atomic swap): OP_IF ... OP_SHA256 ... OP_CHECKLOCKTIMEVERIFY ... OP_ENDIF
+  if (spk_asm && spk_asm.includes("OP_SHA256") && spk_asm.includes("OP_CHECKLOCKTIMEVERIFY")) {
+    return "htlc";
+  }
+
+  // 6. Token/NFT classification via tokenId (non-native)
+  if (tokenId && !isNativeTokenId(tokenId)) {
+    const isNft = tokenId.includes("#");
+    const spk = rpcVout.scriptPubKey as Record<string, unknown> | undefined;
+    const predicate = (rpcVout.predicate ?? spk?.predicate) as Record<string, unknown> | undefined;
+    const op = predicate?.op as number | undefined;
+    if (op === 0) {
+      return isNft ? "nft_create" : "token_create";
+    }
+    if (op === 1) return "token_mint";
+    if (op === 2) return "nft_mint";
+    // Token output without predicate op — still native coin movement
+    return "transfer";
+  }
+
+  // 7. Native NAV output — standard script types, nonstandard, BLSCT, or anything else
+  return "transfer";
 }
 
 function extractPrevOutFromVin(vin: Record<string, unknown>): string {
@@ -234,6 +315,10 @@ export function parseBlock(rpcBlock: Record<string, unknown>, network: NetworkTy
       if (blsct) txIsBlsct = true;
       if (hasTokenFields(rpcVout)) txHasToken = true;
 
+      const tokenId = extractTokenId(rpcVout);
+      const spkFields = extractSpkFields(rpcVout);
+      const outputType = classifyOutputType(rpcVout, isCoinbaseTx, blsct, tokenId);
+
       if (blsct) {
         const fields = extractBlsctFields(rpcVout);
         outputs.push({
@@ -241,6 +326,10 @@ export function parseBlock(rpcBlock: Record<string, unknown>, network: NetworkTy
           n: voutIndex,
           output_hash: outputHash,
           is_blsct: true,
+          output_type: outputType,
+          spk_type: spkFields.spk_type,
+          spk_hex: spkFields.spk_hex,
+          token_id: tokenId,
           spending_key: fields.spending_key,
           ephemeral_key: fields.ephemeral_key,
           blinding_key: fields.blinding_key,
@@ -254,6 +343,10 @@ export function parseBlock(rpcBlock: Record<string, unknown>, network: NetworkTy
           value_sat: satoshis(rpcVout.value),
           address: extractAddress(rpcVout),
           is_blsct: false,
+          output_type: outputType,
+          spk_type: spkFields.spk_type,
+          spk_hex: spkFields.spk_hex,
+          token_id: tokenId,
         });
       }
     }

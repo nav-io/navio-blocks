@@ -122,6 +122,22 @@ export function initDatabase(dbPath: string): Database.Database {
   // Lightweight migrations for existing DBs.
   ensureColumn(db, "transactions", "raw_json", "TEXT");
   ensureColumn(db, "blocks", "is_blsct", "INTEGER DEFAULT 0");
+  ensureColumn(db, "outputs", "output_type", "TEXT DEFAULT 'unknown'");
+  ensureColumn(db, "outputs", "spk_type", "TEXT");
+  ensureColumn(db, "outputs", "spk_hex", "TEXT");
+  ensureColumn(db, "outputs", "token_id", "TEXT");
+
+  // Indexes on migrated columns (must run after ensureColumn)
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_outputs_type     ON outputs(output_type);
+    CREATE INDEX IF NOT EXISTS idx_outputs_token_id ON outputs(token_id);
+  `);
+
+  // Remap removed output types to current enum values
+  db.exec(`UPDATE outputs SET output_type = 'transfer' WHERE output_type IN ('blsct', 'native', 'unstake')`);
+  db.exec(`UPDATE outputs SET output_type = 'fee' WHERE output_type = 'data'`);
+  db.exec(`UPDATE outputs SET output_type = 'transfer' WHERE output_type = 'unknown' AND is_blsct = 1`);
+  db.exec(`UPDATE outputs SET output_type = 'transfer' WHERE output_type = 'unknown' AND (token_id IS NULL OR token_id = '0000000000000000000000000000000000000000000000000000000000000000') AND spk_type IN ('nonstandard', 'pubkeyhash', 'scripthash', 'witness_v0_keyhash', 'witness_v0_scripthash', 'witness_v1_taproot', 'pubkey', 'multisig')`);
 
   return db;
 }

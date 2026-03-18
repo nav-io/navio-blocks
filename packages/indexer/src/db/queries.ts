@@ -54,9 +54,9 @@ export class Queries {
 
     this.stmtInsertOutput = db.prepare(`
       INSERT OR REPLACE INTO outputs
-        (output_hash, txid, n, value_sat, address, spending_key, ephemeral_key, blinding_key, view_tag, is_blsct)
+        (output_hash, txid, n, value_sat, address, spending_key, ephemeral_key, blinding_key, view_tag, is_blsct, output_type, spk_type, spk_hex, token_id)
       VALUES
-        (@output_hash, @txid, @n, @value_sat, @address, @spending_key, @ephemeral_key, @blinding_key, @view_tag, @is_blsct)
+        (@output_hash, @txid, @n, @value_sat, @address, @spending_key, @ephemeral_key, @blinding_key, @view_tag, @is_blsct, @output_type, @spk_type, @spk_hex, @token_id)
     `);
 
     this.stmtInsertInput = db.prepare(`
@@ -236,6 +236,10 @@ export class Queries {
       blinding_key: output.blinding_key ?? null,
       view_tag: output.view_tag ?? null,
       is_blsct: output.is_blsct ? 1 : 0,
+      output_type: output.output_type ?? 'unknown',
+      spk_type: output.spk_type ?? null,
+      spk_hex: output.spk_hex ?? null,
+      token_id: output.token_id ?? null,
     });
   }
 

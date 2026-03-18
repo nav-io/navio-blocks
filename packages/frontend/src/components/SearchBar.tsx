@@ -26,6 +26,8 @@ export function SearchBar({ className = '', compact = false }: SearchBarProps) {
         navigate(`/block/${result.block.height}`);
       } else if (result.type === 'transaction' && result.transaction) {
         navigate(`/tx/${result.transaction.txid}`);
+      } else if (result.type === 'output' && result.output_hash) {
+        navigate(`/output/${result.output_hash}`);
       } else {
         setError('No results found');
       }

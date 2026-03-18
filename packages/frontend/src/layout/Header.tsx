@@ -8,6 +8,7 @@ const NAVIO_LOGO_URL = 'https://nav.io/assets/images/logo.svg';
 const navLinks = [
   { to: '/', label: 'Home' },
   { to: '/blocks', label: 'Blocks' },
+  { to: '/outputs', label: 'Outputs' },
   { to: '/network', label: 'Network' },
   { to: '/supply', label: 'Supply' },
   { to: '/price', label: 'Price' },

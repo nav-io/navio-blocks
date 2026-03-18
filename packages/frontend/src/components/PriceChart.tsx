@@ -1,15 +1,65 @@
 import { useEffect, useRef } from 'react';
-import { createChart, type IChartApi, type ISeriesApi, type AreaSeriesOptions, type DeepPartial } from 'lightweight-charts';
+import {
+  createChart,
+  type IChartApi,
+  type ISeriesApi,
+  type AreaSeriesOptions,
+  type LineSeriesOptions,
+  type DeepPartial,
+} from 'lightweight-charts';
 
 interface PriceChartProps {
   data: { timestamp: number; value: number }[];
   color?: string;
+  emaData?: { timestamp: number; value: number }[];
+  emaColor?: string;
+  medianData?: { timestamp: number; value: number }[];
+  medianColor?: string;
 }
 
-export default function PriceChart({ data, color = '#E040A0' }: PriceChartProps) {
+function toChartData(data: { timestamp: number; value: number }[]): Array<{
+  time: import('lightweight-charts').UTCTimestamp;
+  value: number;
+}> {
+  const sorted = data
+    .filter((d) => Number.isFinite(d.timestamp) && Number.isFinite(d.value))
+    .map((d) => ({
+      time: d.timestamp as import('lightweight-charts').UTCTimestamp,
+      value: d.value,
+    }))
+    .sort((a, b) => (a.time as number) - (b.time as number));
+
+  // lightweight-charts requires strictly ascending unique timestamps.
+  // If multiple points land on the same second, keep the latest one.
+  const chartData: Array<{
+    time: import('lightweight-charts').UTCTimestamp;
+    value: number;
+  }> = [];
+  for (const point of sorted) {
+    const last = chartData[chartData.length - 1];
+    if (last && (last.time as number) === (point.time as number)) {
+      chartData[chartData.length - 1] = point;
+    } else {
+      chartData.push(point);
+    }
+  }
+
+  return chartData;
+}
+
+export default function PriceChart({
+  data,
+  color = '#E040A0',
+  emaData,
+  emaColor = 'rgba(255, 255, 255, 0.75)',
+  medianData,
+  medianColor = 'rgba(255, 255, 255, 0.45)',
+}: PriceChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Area'> | null>(null);
+  const emaSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const medianSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -51,10 +101,30 @@ export default function PriceChart({ data, color = '#E040A0' }: PriceChartProps)
       crosshairMarkerBorderColor: '#fff',
       crosshairMarkerRadius: 4,
     };
+    const emaOptions: DeepPartial<LineSeriesOptions> = {
+      color: emaColor,
+      lineWidth: 2,
+      lineStyle: 2, // dashed
+      crosshairMarkerVisible: false,
+      lastValueVisible: false,
+      priceLineVisible: false,
+    };
+    const medianOptions: DeepPartial<LineSeriesOptions> = {
+      color: medianColor,
+      lineWidth: 2,
+      lineStyle: 1, // dotted
+      crosshairMarkerVisible: false,
+      lastValueVisible: false,
+      priceLineVisible: false,
+    };
 
     const series = chart.addAreaSeries(seriesOptions);
+    const emaSeries = chart.addLineSeries(emaOptions);
+    const medianSeries = chart.addLineSeries(medianOptions);
     chartRef.current = chart;
     seriesRef.current = series;
+    emaSeriesRef.current = emaSeries;
+    medianSeriesRef.current = medianSeries;
 
     // Handle resize
     const observer = new ResizeObserver((entries) => {
@@ -69,39 +139,37 @@ export default function PriceChart({ data, color = '#E040A0' }: PriceChartProps)
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
+      emaSeriesRef.current = null;
+      medianSeriesRef.current = null;
     };
-  }, [color]);
+  }, [color, emaColor, medianColor]);
 
   // Update data when it changes
   useEffect(() => {
-    if (!seriesRef.current || !data.length) return;
+    if (!seriesRef.current) return;
 
-    const sorted = data
-      .filter((d) => Number.isFinite(d.timestamp) && Number.isFinite(d.value))
-      .map((d) => ({
-        time: d.timestamp as import('lightweight-charts').UTCTimestamp,
-        value: d.value,
-      }))
-      .sort((a, b) => (a.time as number) - (b.time as number));
+    const areaData = toChartData(data);
+    seriesRef.current.setData(areaData);
 
-    // lightweight-charts requires strictly ascending unique timestamps.
-    // If multiple points land on the same second, keep the latest one.
-    const chartData: Array<{
-      time: import('lightweight-charts').UTCTimestamp;
-      value: number;
-    }> = [];
-    for (const point of sorted) {
-      const last = chartData[chartData.length - 1];
-      if (last && (last.time as number) === (point.time as number)) {
-        chartData[chartData.length - 1] = point;
+    if (emaSeriesRef.current) {
+      if (emaData && emaData.length > 0) {
+        emaSeriesRef.current.setData(toChartData(emaData));
       } else {
-        chartData.push(point);
+        emaSeriesRef.current.setData([]);
+      }
+    }
+    if (medianSeriesRef.current) {
+      if (medianData && medianData.length > 0) {
+        medianSeriesRef.current.setData(toChartData(medianData));
+      } else {
+        medianSeriesRef.current.setData([]);
       }
     }
 
-    seriesRef.current.setData(chartData);
-    chartRef.current?.timeScale().fitContent();
-  }, [data]);
+    if (areaData.length > 0) {
+      chartRef.current?.timeScale().fitContent();
+    }
+  }, [data, emaData, medianData]);
 
   return (
     <div

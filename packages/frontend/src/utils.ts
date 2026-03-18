@@ -37,8 +37,11 @@ export function formatBytes(bytes: number): string {
   return bytes + ' B';
 }
 
-export function formatUSD(n: number): string {
-  return '$' + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+export function formatUSD(n: number, decimals = 2): string {
+  return '$' + n.toLocaleString(undefined, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
 }
 
 export function formatBTC(n: number): string {
@@ -48,6 +51,22 @@ export function formatBTC(n: number): string {
 export function formatPercent(n: number): string {
   const sign = n >= 0 ? '+' : '';
   return sign + n.toFixed(2) + '%';
+}
+
+const NATIVE_TOKEN_ID = '0000000000000000000000000000000000000000000000000000000000000000';
+
+/** Returns true if token_id represents an actual token/NFT (not native NAV). */
+export function isRealToken(tokenId: string | undefined | null): boolean {
+  if (!tokenId) return false;
+  return tokenId.replace(/#.*$/, '') !== NATIVE_TOKEN_ID;
+}
+
+/** Display label for a token_id. Returns null for native/missing. */
+export function tokenLabel(tokenId: string | undefined | null): string | null {
+  if (!tokenId) return null;
+  const base = tokenId.replace(/#.*$/, '');
+  if (base === NATIVE_TOKEN_ID) return null;
+  return tokenId;
 }
 
 export function satsToCoinShort(sats: number): string {

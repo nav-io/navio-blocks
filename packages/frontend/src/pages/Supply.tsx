@@ -73,6 +73,7 @@ export default function Supply() {
           <StatCard
             label="Total Supply"
             value={`${satsToCoinShort(supply.total_supply)} NAV`}
+            subValue={`${satsToCoin(supply.total_supply)} `}
           />
           <StatCard
             label="Total Burned"

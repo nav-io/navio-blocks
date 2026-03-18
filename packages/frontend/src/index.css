@@ -9,6 +9,11 @@
     color-scheme: dark;
   }
 
+  html,
+  body {
+    overflow-x: hidden;
+  }
+
   body {
     @apply text-white font-sans antialiased;
     background:
@@ -23,6 +28,7 @@
   .grid-bg {
     position: relative;
     isolation: isolate;
+    overflow-x: clip;
     background-image:
       linear-gradient(rgba(63, 164, 255, 0.06) 1px, transparent 1px),
       linear-gradient(90deg, rgba(63, 164, 255, 0.06) 1px, transparent 1px);

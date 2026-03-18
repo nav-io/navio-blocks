@@ -58,7 +58,7 @@ export default function Price() {
                 Current Price
               </p>
               <p className="text-4xl font-bold font-mono text-white">
-                {formatUSD(price.price_usd)}
+                {formatUSD(price.price_usd, 4)}
               </p>
             </div>
 

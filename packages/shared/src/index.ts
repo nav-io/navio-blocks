@@ -1,3 +1,16 @@
+// Output type classification
+export type OutputType =
+  | 'transfer'
+  | 'fee'
+  | 'coinbase'
+  | 'stake'
+  | 'htlc'
+  | 'token_create'
+  | 'token_mint'
+  | 'nft_create'
+  | 'nft_mint'
+  | 'unknown';
+
 // Block types
 export interface Block {
   height: number;
@@ -49,6 +62,11 @@ export interface Output {
   // Transparent fields
   value_sat?: number;
   address?: string;
+  // Classification
+  output_type?: OutputType;
+  spk_type?: string;
+  spk_hex?: string;
+  token_id?: string;
   // BLSCT fields
   spending_key?: string;
   ephemeral_key?: string;
@@ -61,6 +79,38 @@ export interface Output {
 export interface LatestOutput extends Output {
   block_height: number;
   timestamp: number;
+}
+
+// Full output detail (output page)
+export interface OutputDetail extends Output {
+  block_height: number;
+  timestamp: number;
+  is_coinbase_tx: boolean;
+}
+
+// Output type distribution stats
+export interface OutputTypeStats {
+  type: OutputType;
+  count: number;
+  percentage: number;
+}
+
+// Staking overview (for network page)
+export interface StakingInfo {
+  active_stakes: number;
+  total_staked_sat: number;
+  total_ever_staked: number;
+  avg_stake_age_seconds: number;
+  oldest_stake_timestamp: number;
+  newest_stake_timestamp: number;
+  stake_value_distribution: { bucket: string; count: number }[];
+  top_stakes: {
+    output_hash: string;
+    value_sat: number;
+    block_height: number;
+    timestamp: number;
+    age_seconds: number;
+  }[];
 }
 
 // Input
@@ -171,9 +221,10 @@ export interface PaginatedResponse<T> {
 }
 
 export interface SearchResult {
-  type: 'block' | 'transaction' | 'none';
+  type: 'block' | 'transaction' | 'output' | 'none';
   block?: Block;
   transaction?: Transaction;
+  output_hash?: string;
 }
 
 export type ChartPeriod = '24h' | '7d' | '30d' | '1y';

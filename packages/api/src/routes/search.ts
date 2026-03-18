@@ -33,9 +33,10 @@ export default async function searchRoutes(app: FastifyInstance) {
         200: {
           type: 'object',
           properties: {
-            type: { type: 'string', enum: ['block', 'transaction', 'none'] },
+            type: { type: 'string', enum: ['block', 'transaction', 'output', 'none'] },
             block: { type: 'object', nullable: true },
             transaction: { type: 'object', nullable: true },
+            output_hash: { type: 'string', nullable: true },
           },
         },
       },
@@ -73,15 +74,12 @@ export default async function searchRoutes(app: FastifyInstance) {
         return { type: 'transaction', transaction: toTransaction(txRow) };
       }
 
-      const outputTxRow = queryOne<Record<string, unknown>>(
-        `SELECT t.*
-         FROM outputs o
-         JOIN transactions t ON t.txid = o.txid
-         WHERE LOWER(o.output_hash) = LOWER(?)`,
+      const outputRow = queryOne<{ output_hash: string }>(
+        `SELECT output_hash FROM outputs WHERE LOWER(output_hash) = LOWER(?)`,
         q,
       );
-      if (outputTxRow) {
-        return { type: 'transaction', transaction: toTransaction(outputTxRow) };
+      if (outputRow) {
+        return { type: 'output', output_hash: outputRow.output_hash };
       }
     }
 

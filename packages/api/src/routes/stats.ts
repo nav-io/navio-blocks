@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { queryOne, queryAll, queryScalar } from '../db.js';
 import { rpcCall } from '../rpc.js';
-import type { NetworkStats, ChartPoint, ChartPeriod } from '@navio-blocks/shared';
+import type { NetworkStats, ChartPoint } from '@navio-blocks/shared';
 
 interface MempoolRpcResult {
   size: number;
@@ -12,18 +12,25 @@ interface NetworkInfoRpcResult {
   connections: number;
 }
 
-/** Calculate the cutoff timestamp and grouping format for a chart period. */
-function periodConfig(period: ChartPeriod): { cutoff: number; groupSql: string } {
-  const now = Math.floor(Date.now() / 1000);
+type StatsChartPeriod = '24h' | '7d' | '30d' | 'all';
+
+/** Calculate chart cutoff/grouping relative to a reference timestamp. */
+function periodConfig(
+  period: StatsChartPeriod,
+  referenceTs: number,
+): { cutoff: number; groupSql: string } {
+  const anchor = referenceTs > 0 ? referenceTs : Math.floor(Date.now() / 1000);
   switch (period) {
     case '24h':
-      return { cutoff: now - 86400, groupSql: "(timestamp / 3600) * 3600" };
+      return { cutoff: anchor - 86400, groupSql: "(timestamp / 3600) * 3600" };
     case '7d':
-      return { cutoff: now - 7 * 86400, groupSql: "(timestamp / 3600) * 3600" };
+      return { cutoff: anchor - 7 * 86400, groupSql: "(timestamp / 3600) * 3600" };
     case '30d':
-      return { cutoff: now - 30 * 86400, groupSql: "(timestamp / 86400) * 86400" };
+      return { cutoff: anchor - 30 * 86400, groupSql: "(timestamp / 86400) * 86400" };
+    case 'all':
+      return { cutoff: 0, groupSql: "(timestamp / 86400) * 86400" };
     default:
-      return { cutoff: now - 86400, groupSql: "(timestamp / 3600) * 3600" };
+      return { cutoff: anchor - 86400, groupSql: "(timestamp / 3600) * 3600" };
   }
 }
 
@@ -138,7 +145,7 @@ export default async function statsRoutes(app: FastifyInstance) {
 
   // GET /api/stats/chart — Chart data for block spacing, difficulty and tx counts
   app.get<{
-    Querystring: { period?: ChartPeriod };
+    Querystring: { period?: StatsChartPeriod };
   }>('/api/stats/chart', {
     schema: {
       tags: ['Stats'],
@@ -146,7 +153,7 @@ export default async function statsRoutes(app: FastifyInstance) {
       querystring: {
         type: 'object',
         properties: {
-          period: { type: 'string', enum: ['24h', '7d', '30d'], default: '24h' },
+          period: { type: 'string', enum: ['24h', '7d', '30d', 'all'], default: '24h' },
         },
       },
       response: {
@@ -188,8 +195,9 @@ export default async function statsRoutes(app: FastifyInstance) {
       },
     },
   }, async (request): Promise<{ block_times: ChartPoint[]; difficulty: ChartPoint[]; tx_counts: ChartPoint[] }> => {
-    const period = (request.query.period ?? '24h') as ChartPeriod;
-    const { cutoff, groupSql } = periodConfig(period);
+    const period = (request.query.period ?? '24h') as StatsChartPeriod;
+    const latestTimestamp = queryScalar<number>('SELECT COALESCE(MAX(timestamp), 0) FROM blocks');
+    const { cutoff, groupSql } = periodConfig(period, latestTimestamp);
 
     // Block times: average time between consecutive blocks, grouped by period bucket
     // We compute per-block time differences and then average within each bucket.
