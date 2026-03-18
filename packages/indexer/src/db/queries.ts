@@ -23,6 +23,9 @@ export class Queries {
   private stmtDeleteOutputsByBlock;
   private stmtDeleteInputsByBlock;
   private stmtUpsertPeer;
+  private stmtGetPeerByAddr;
+  private stmtUpdatePeerById;
+  private stmtDedupePeersByAddr;
   private stmtDeleteOldPeers;
   private stmtInsertPrice;
   private stmtGetLatestPriceTs;
@@ -102,6 +105,38 @@ export class Queries {
         (id, addr, subversion, services, country, city, lat, lon, last_seen, first_seen)
       VALUES
         (@id, @addr, @subversion, @services, @country, @city, @lat, @lon, @last_seen, @first_seen)
+    `);
+
+    this.stmtGetPeerByAddr = db.prepare(
+      `SELECT id, first_seen
+       FROM peers
+       WHERE addr = ?
+       ORDER BY last_seen DESC, id DESC
+       LIMIT 1`
+    );
+
+    this.stmtUpdatePeerById = db.prepare(`
+      UPDATE peers
+      SET
+        addr = @addr,
+        subversion = @subversion,
+        services = @services,
+        country = @country,
+        city = @city,
+        lat = @lat,
+        lon = @lon,
+        last_seen = @last_seen,
+        first_seen = @first_seen
+      WHERE id = @id
+    `);
+
+    this.stmtDedupePeersByAddr = db.prepare(`
+      DELETE FROM peers
+      WHERE rowid NOT IN (
+        SELECT MAX(rowid)
+        FROM peers
+        GROUP BY addr
+      )
     `);
 
     this.stmtDeleteOldPeers = db.prepare(
@@ -252,6 +287,31 @@ export class Queries {
   }
 
   upsertPeer(peer: Peer): void {
+    const existing = this.stmtGetPeerByAddr.get(peer.addr) as
+      | { id: number; first_seen: number }
+      | undefined;
+
+    if (existing) {
+      const firstSeen =
+        Number.isFinite(existing.first_seen) && existing.first_seen > 0
+          ? Math.min(existing.first_seen, peer.first_seen)
+          : peer.first_seen;
+
+      this.stmtUpdatePeerById.run({
+        id: existing.id,
+        addr: peer.addr,
+        subversion: peer.subversion,
+        services: peer.services,
+        country: peer.country ?? null,
+        city: peer.city ?? null,
+        lat: peer.lat ?? null,
+        lon: peer.lon ?? null,
+        last_seen: peer.last_seen,
+        first_seen: firstSeen,
+      });
+      return;
+    }
+
     this.stmtUpsertPeer.run({
       id: peer.id,
       addr: peer.addr,
@@ -264,6 +324,10 @@ export class Queries {
       last_seen: peer.last_seen,
       first_seen: peer.first_seen,
     });
+  }
+
+  compactPeersByAddress(): void {
+    this.stmtDedupePeersByAddr.run();
   }
 
   deleteOldPeers(cutoff: number): void {

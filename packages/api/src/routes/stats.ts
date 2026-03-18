@@ -136,13 +136,13 @@ export default async function statsRoutes(app: FastifyInstance) {
     };
   });
 
-  // GET /api/stats/chart — Chart data for block times and tx counts
+  // GET /api/stats/chart — Chart data for block spacing, difficulty and tx counts
   app.get<{
     Querystring: { period?: ChartPeriod };
   }>('/api/stats/chart', {
     schema: {
       tags: ['Stats'],
-      description: 'Chart data for block times and transaction counts',
+      description: 'Chart data for block spacing, difficulty, and transaction counts',
       querystring: {
         type: 'object',
         properties: {
@@ -154,6 +154,16 @@ export default async function statsRoutes(app: FastifyInstance) {
           type: 'object',
           properties: {
             block_times: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  timestamp: { type: 'integer' },
+                  value: { type: 'number' },
+                },
+              },
+            },
+            difficulty: {
               type: 'array',
               items: {
                 type: 'object',
@@ -177,7 +187,7 @@ export default async function statsRoutes(app: FastifyInstance) {
         },
       },
     },
-  }, async (request): Promise<{ block_times: ChartPoint[]; tx_counts: ChartPoint[] }> => {
+  }, async (request): Promise<{ block_times: ChartPoint[]; difficulty: ChartPoint[]; tx_counts: ChartPoint[] }> => {
     const period = (request.query.period ?? '24h') as ChartPeriod;
     const { cutoff, groupSql } = periodConfig(period);
 
@@ -207,6 +217,23 @@ export default async function statsRoutes(app: FastifyInstance) {
       value: Math.round(r.avg_time * 100) / 100,
     }));
 
+    // Difficulty: average block difficulty per time bucket.
+    const difficultyRows = queryAll<{ bucket: number; avg_difficulty: number }>(
+      `SELECT
+        ${groupSql} AS bucket,
+        AVG(difficulty) AS avg_difficulty
+      FROM blocks
+      WHERE timestamp >= ?
+      GROUP BY bucket
+      ORDER BY bucket`,
+      cutoff,
+    );
+
+    const difficulty: ChartPoint[] = difficultyRows.map((r) => ({
+      timestamp: r.bucket,
+      value: r.avg_difficulty,
+    }));
+
     // Transaction counts per bucket
     const txCountRows = queryAll<{ bucket: number; cnt: number }>(
       `SELECT
@@ -225,6 +252,6 @@ export default async function statsRoutes(app: FastifyInstance) {
       value: r.cnt,
     }));
 
-    return { block_times: blockTimes, tx_counts: txCounts };
+    return { block_times: blockTimes, difficulty, tx_counts: txCounts };
   });
 }

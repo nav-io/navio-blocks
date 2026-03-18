@@ -135,6 +135,9 @@ export async function updatePeers(
       queries.upsertPeer(peer);
     }
 
+    // Keep one row per address (latest observation).
+    queries.compactPeersByAddress();
+
     // Remove peers not seen in 24 hours
     const cutoff = now - 24 * 60 * 60;
     queries.deleteOldPeers(cutoff);

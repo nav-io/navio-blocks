@@ -36,7 +36,7 @@ export const api = {
   getStats: () =>
     fetchJSON<import('@navio-blocks/shared').NetworkStats>('/stats'),
   getStatsChart: (period: string) =>
-    fetchJSON<{ block_times: import('@navio-blocks/shared').ChartPoint[]; tx_counts: import('@navio-blocks/shared').ChartPoint[] }>(
+    fetchJSON<import('@navio-blocks/shared').StatsChartData>(
       `/stats/chart?period=${period}`
     ),
 

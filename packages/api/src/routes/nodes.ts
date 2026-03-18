@@ -56,7 +56,16 @@ export default async function nodesRoutes(app: FastifyInstance) {
       },
     },
   }, async (): Promise<NodeStats> => {
-    const peers = queryAll<Peer>('SELECT * FROM peers ORDER BY last_seen DESC');
+    const peers = queryAll<Peer>(
+      `SELECT p.*
+       FROM peers p
+       WHERE p.rowid IN (
+         SELECT MAX(rowid)
+         FROM peers
+         GROUP BY addr
+       )
+       ORDER BY p.last_seen DESC`
+    );
 
     const totalNodes = peers.length;
 
@@ -115,9 +124,20 @@ export default async function nodesRoutes(app: FastifyInstance) {
     },
   }, async (): Promise<NodeMapData> => {
     const peers = queryAll<{ lat: number; lon: number; country: string; city: string; subversion: string }>(
-      `SELECT lat, lon, COALESCE(country, 'Unknown') AS country, COALESCE(city, 'Unknown') AS city, subversion
-       FROM peers
-       WHERE lat IS NOT NULL AND lon IS NOT NULL`,
+      `SELECT
+         p.lat,
+         p.lon,
+         COALESCE(p.country, 'Unknown') AS country,
+         COALESCE(p.city, 'Unknown') AS city,
+         p.subversion
+       FROM peers p
+       WHERE p.rowid IN (
+         SELECT MAX(rowid)
+         FROM peers
+         GROUP BY addr
+       )
+       AND p.lat IS NOT NULL
+       AND p.lon IS NOT NULL`,
     );
 
     return { peers };

@@ -156,6 +156,12 @@ export interface ChartPoint {
   value: number;
 }
 
+export interface StatsChartData {
+  block_times: ChartPoint[];
+  tx_counts: ChartPoint[];
+  difficulty: ChartPoint[];
+}
+
 // API response wrappers
 export interface PaginatedResponse<T> {
   data: T[];
