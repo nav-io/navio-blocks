@@ -82,34 +82,45 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Addresses we've already geolocated — avoids re-fetching on every cycle. */
+const geoCache = new Map<string, { geo: IpApiResponse; expiresAt: number }>();
+const GEO_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+async function geolocateCached(ip: string): Promise<IpApiResponse> {
+  const cached = geoCache.get(ip);
+  if (cached && cached.expiresAt > Date.now()) return cached.geo;
+  const geo = await geolocateIp(ip);
+  geoCache.set(ip, { geo, expiresAt: Date.now() + GEO_CACHE_TTL_MS });
+  return geo;
+}
+
 export async function updatePeers(
   rpc: RpcClient,
   queries: Queries
 ): Promise<void> {
   try {
-    const rpcPeers = (await rpc.getPeerInfo()) as Record<string, unknown>[];
     const now = Math.floor(Date.now() / 1000);
 
-    console.log(`[peers] Updating ${rpcPeers.length} peers`);
+    // 1. Direct connections from getpeerinfo (rich data: subversion, services)
+    const rpcPeers = (await rpc.getPeerInfo()) as Record<string, unknown>[];
+    console.log(`[peers] Direct peers: ${rpcPeers.length}`);
 
-    for (let i = 0; i < rpcPeers.length; i++) {
-      const rp = rpcPeers[i];
+    // Track addresses we've already processed to avoid duplicate geo lookups
+    const seenAddrs = new Set<string>();
+    let geoCount = 0;
+
+    for (const rp of rpcPeers) {
       const peerId = toNumberSafe(rp.id, NaN);
-      if (!Number.isFinite(peerId)) {
-        console.warn("[peers] Skipping peer with invalid id:", rp.id);
-        continue;
-      }
+      if (!Number.isFinite(peerId)) continue;
 
       const addr = toStringSafe(rp.addr, "");
+      seenAddrs.add(addr);
       const ip = extractIp(addr);
 
       let geo: IpApiResponse = {};
       if (isRoutableIp(ip)) {
-        geo = await geolocateIp(ip);
-        // Rate-limit IP API requests
-        if (i < rpcPeers.length - 1) {
-          await sleep(IP_API_RATE_LIMIT_MS);
-        }
+        geo = await geolocateCached(ip);
+        if (++geoCount < rpcPeers.length) await sleep(IP_API_RATE_LIMIT_MS);
       }
 
       const connTime = toNumberSafe(rp.conntime, now);
@@ -135,14 +146,67 @@ export async function updatePeers(
       queries.upsertPeer(peer);
     }
 
+    // 2. Discovered addresses from the address manager (gossip network)
+    //    getnodeaddresses(0) returns all known addresses.
+    try {
+      const knownAddrs = (await rpc.getNodeAddresses(0)) as Record<string, unknown>[];
+      let newCount = 0;
+
+      for (const entry of knownAddrs) {
+        const address = toStringSafe(entry.address, "");
+        const port = toNumberSafe(entry.port, 0);
+        if (!address || !port) continue;
+
+        const addr = address.includes(":") ? `[${address}]:${port}` : `${address}:${port}`;
+        if (seenAddrs.has(addr)) continue;
+        seenAddrs.add(addr);
+
+        const ip = address;
+        let geo: IpApiResponse = {};
+        if (isRoutableIp(ip)) {
+          geo = await geolocateCached(ip);
+          // Only rate-limit if we actually hit the API (not cached)
+          const cached = geoCache.get(ip);
+          if (cached && cached.expiresAt - GEO_CACHE_TTL_MS + 2000 > Date.now() - 2000) {
+            // freshly fetched, rate limit
+            await sleep(IP_API_RATE_LIMIT_MS);
+          }
+        }
+
+        const lastSeen = toNumberSafe(entry.time, now);
+        const services = toStringSafe(entry.services, "");
+
+        const peer: Peer = {
+          id: 0, // no RPC peer id for discovered nodes
+          addr,
+          subversion: "",
+          services,
+          country: toStringSafe(geo.country, "") || undefined,
+          city: toStringSafe(geo.city, "") || undefined,
+          lat: toOptionalNumberSafe(geo.lat),
+          lon: toOptionalNumberSafe(geo.lon),
+          last_seen: lastSeen,
+          first_seen: lastSeen,
+        };
+
+        queries.upsertPeer(peer);
+        newCount++;
+      }
+
+      console.log(`[peers] Discovered ${newCount} additional peers from address manager (${knownAddrs.length} total known)`);
+    } catch (err) {
+      // getnodeaddresses may not be available on older nodes
+      console.warn("[peers] getnodeaddresses not available:", (err as Error).message);
+    }
+
     // Keep one row per address (latest observation).
     queries.compactPeersByAddress();
 
-    // Remove peers not seen in 24 hours
-    const cutoff = now - 24 * 60 * 60;
+    // Remove peers not seen in 7 days (longer window for discovered peers)
+    const cutoff = now - 7 * 24 * 60 * 60;
     queries.deleteOldPeers(cutoff);
 
-    console.log(`[peers] Peer update complete`);
+    console.log(`[peers] Peer update complete, ${seenAddrs.size} total addresses`);
   } catch (err) {
     console.error("[peers] Error updating peers:", err);
   }

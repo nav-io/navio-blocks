@@ -93,4 +93,8 @@ export class RpcClient {
   async getBlockchainInfo(): Promise<unknown> {
     return await this.call("getblockchaininfo");
   }
+
+  async getNodeAddresses(count = 0): Promise<unknown[]> {
+    return (await this.call("getnodeaddresses", [count])) as unknown[];
+  }
 }
