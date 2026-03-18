@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { queryOne, queryAll, queryScalar } from '../db.js';
 import { rpcCall } from '../rpc.js';
+import { cached } from '../cache.js';
 import type { NetworkStats, ChartPoint } from '@navio-blocks/shared';
 
 interface MempoolRpcResult {
@@ -58,6 +59,7 @@ export default async function statsRoutes(app: FastifyInstance) {
       },
     },
   }, async (): Promise<NetworkStats> => {
+    return cached('stats', 10_000, async () => {
     const height = queryScalar<number>('SELECT COALESCE(MAX(height), 0) FROM blocks');
 
     const latestBlock = queryOne<{ difficulty: number }>(
@@ -71,17 +73,11 @@ export default async function statsRoutes(app: FastifyInstance) {
       'SELECT COUNT(*) FROM transactions WHERE is_coinbase = 0',
     );
 
-    // Count outputs from non-coinbase transactions, excluding transparent fee outputs.
+    // Count non-coinbase, non-fee outputs.
     const totalOutputs = queryScalar<number>(
-      `SELECT COUNT(*)
-       FROM outputs o
-       JOIN transactions t ON t.txid = o.txid
-       WHERE t.is_coinbase = 0
-         AND NOT (
-           o.is_blsct = 0
-           AND COALESCE(o.value_sat, 0) > 0
-         )
-         AND COALESCE(o.output_hash, '') <> ''`,
+      `SELECT COUNT(*) FROM outputs
+       WHERE output_hash <> ''
+         AND output_type NOT IN ('coinbase', 'fee')`,
     );
 
     const blsctCount = queryScalar<number>(
@@ -141,6 +137,7 @@ export default async function statsRoutes(app: FastifyInstance) {
       hash_rate: Math.round(hashRate),
       connections,
     };
+    }); // cached
   });
 
   // GET /api/stats/chart — Chart data for block spacing, difficulty and tx counts
@@ -196,6 +193,7 @@ export default async function statsRoutes(app: FastifyInstance) {
     },
   }, async (request): Promise<{ block_times: ChartPoint[]; difficulty: ChartPoint[]; tx_counts: ChartPoint[] }> => {
     const period = (request.query.period ?? '24h') as StatsChartPeriod;
+    return cached(`stats:chart:${period}`, 30_000, () => {
     const latestTimestamp = queryScalar<number>('SELECT COALESCE(MAX(timestamp), 0) FROM blocks');
     const { cutoff, groupSql } = periodConfig(period, latestTimestamp);
 
@@ -261,5 +259,6 @@ export default async function statsRoutes(app: FastifyInstance) {
     }));
 
     return { block_times: blockTimes, difficulty, tx_counts: txCounts };
+    }); // cached
   });
 }

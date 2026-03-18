@@ -27,7 +27,9 @@ export function formatDifficulty(d: number): string {
   if (d >= 1e9) return (d / 1e9).toFixed(2) + 'G';
   if (d >= 1e6) return (d / 1e6).toFixed(2) + 'M';
   if (d >= 1e3) return (d / 1e3).toFixed(2) + 'K';
-  return d.toFixed(2);
+  if (d >= 1) return d.toFixed(2);
+  if (d > 0) return d.toPrecision(3);
+  return '0';
 }
 
 export function formatBytes(bytes: number): string {

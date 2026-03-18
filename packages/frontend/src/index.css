@@ -9,18 +9,19 @@
     color-scheme: dark;
   }
 
-  html,
-  body {
+  html {
     overflow-x: hidden;
   }
 
   body {
     @apply text-white font-sans antialiased;
+    overflow-y: visible;
     background:
       radial-gradient(1200px 560px at 12% -20%, rgba(63, 164, 255, 0.16), transparent 58%),
       radial-gradient(900px 500px at 92% -10%, rgba(242, 93, 156, 0.14), transparent 62%),
       #080d1f;
     min-height: 100vh;
+    min-height: 100dvh;
   }
 }
 
@@ -28,7 +29,6 @@
   .grid-bg {
     position: relative;
     isolation: isolate;
-    overflow-x: clip;
     background-image:
       linear-gradient(rgba(63, 164, 255, 0.06) 1px, transparent 1px),
       linear-gradient(90deg, rgba(63, 164, 255, 0.06) 1px, transparent 1px);
@@ -36,8 +36,8 @@
   }
   .grid-bg::before {
     content: '';
-    position: absolute;
-    inset: -20%;
+    position: fixed;
+    inset: 0;
     z-index: -1;
     pointer-events: none;
     background:

@@ -115,6 +115,7 @@ export function initDatabase(dbPath: string): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_transactions_block_height ON transactions(block_height);
     CREATE INDEX IF NOT EXISTS idx_outputs_txid              ON outputs(txid);
     CREATE INDEX IF NOT EXISTS idx_outputs_address           ON outputs(address);
+    CREATE INDEX IF NOT EXISTS idx_inputs_prev_out           ON inputs(prev_out);
     CREATE INDEX IF NOT EXISTS idx_blocks_hash               ON blocks(hash);
     CREATE INDEX IF NOT EXISTS idx_blocks_timestamp          ON blocks(timestamp);
   `);

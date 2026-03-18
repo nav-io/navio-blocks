@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { queryOne, queryAll } from '../db.js';
+import { cached } from '../cache.js';
 import type {
   TransactionDetail,
   Transaction,
@@ -242,60 +243,71 @@ export default async function transactionsRoutes(app: FastifyInstance) {
       request.query.include_coinbase === '1' ||
       request.query.include_coinbase === 'true';
     const period = request.query.period ?? '30d';
+    return cached(`outputs:stats:${period}:${includeCoinbase}`, 30_000, () => {
 
-    const conditions: string[] = [`COALESCE(o.output_hash, '') <> ''`];
-    if (!includeCoinbase) {
-      conditions.push(`COALESCE(o.output_type, 'unknown') <> 'coinbase'`);
-    }
-
-    // Time filter
-    if (period !== 'all') {
-      const periodSeconds: Record<string, number> = {
-        '24h': 86400,
-        '7d': 604800,
-        '30d': 2592000,
-        '1y': 31536000,
-      };
-      const secs = periodSeconds[period];
-      if (secs) {
-        const cutoff = Math.floor(Date.now() / 1000) - secs;
-        conditions.push(`b.timestamp >= ${cutoff}`);
-      }
-    }
-
-    const whereClause = conditions.join(' AND ');
-    const fromClause = period !== 'all'
-      ? `outputs o JOIN transactions t ON t.txid = o.txid JOIN blocks b ON b.height = t.block_height`
-      : `outputs o`;
-
-    const totalRow = queryOne<{ count: number }>(
-      `SELECT COUNT(*) AS count FROM ${fromClause} WHERE ${whereClause}`,
-    );
-    const total = totalRow?.count ?? 0;
-    if (total === 0) return [];
-
-    const rows = queryAll<{ output_type: string; count: number }>(
-      `SELECT
-         CASE COALESCE(o.output_type, 'unknown')
+    const outputTypeCase = `CASE COALESCE(o.output_type, 'unknown')
            WHEN 'blsct' THEN 'transfer'
            WHEN 'native' THEN 'transfer'
            WHEN 'unstake' THEN 'transfer'
            WHEN 'unknown' THEN 'transfer'
            WHEN 'data' THEN 'fee'
            ELSE COALESCE(o.output_type, 'transfer')
-         END AS output_type,
-         COUNT(*) AS count
-       FROM ${fromClause}
-       WHERE ${whereClause}
+         END`;
+
+    const coinbaseFilter = includeCoinbase ? '' : `AND ${outputTypeCase} <> 'coinbase'`;
+
+    if (period === 'all') {
+      // Fast path: no time filter, query outputs directly
+      const rows = queryAll<{ output_type: string; count: number }>(
+        `SELECT ${outputTypeCase} AS output_type, COUNT(*) AS count
+         FROM outputs o
+         WHERE o.output_hash <> '' ${coinbaseFilter}
+         GROUP BY 1
+         ORDER BY count DESC`,
+      );
+      const total = rows.reduce((s, r) => s + r.count, 0);
+      if (total === 0) return [];
+      return rows.map((r) => ({
+        type: r.output_type as OutputTypeStats['type'],
+        count: r.count,
+        percentage: Math.round((r.count / total) * 10000) / 100,
+      }));
+    }
+
+    // Time-filtered: resolve cutoff timestamp → min block height, then drive from transactions
+    const periodSeconds: Record<string, number> = {
+      '24h': 86400,
+      '7d': 604800,
+      '30d': 2592000,
+      '1y': 31536000,
+    };
+    const secs = periodSeconds[period];
+    if (!secs) return [];
+
+    const cutoff = Math.floor(Date.now() / 1000) - secs;
+    const minHeightRow = queryOne<{ h: number }>(
+      `SELECT COALESCE(MIN(height), 0) AS h FROM blocks WHERE timestamp >= ?`,
+      cutoff,
+    );
+    const minHeight = minHeightRow?.h ?? 0;
+
+    const rows = queryAll<{ output_type: string; count: number }>(
+      `SELECT ${outputTypeCase} AS output_type, COUNT(*) AS count
+       FROM transactions t
+       JOIN outputs o ON o.txid = t.txid
+       WHERE t.block_height >= ? AND o.output_hash <> '' ${coinbaseFilter}
        GROUP BY 1
        ORDER BY count DESC`,
+      minHeight,
     );
-
+    const total = rows.reduce((s, r) => s + r.count, 0);
+    if (total === 0) return [];
     return rows.map((r) => ({
       type: r.output_type as OutputTypeStats['type'],
       count: r.count,
       percentage: Math.round((r.count / total) * 10000) / 100,
     }));
+    }); // cached
   });
 
   // GET /api/staking — Staking overview
@@ -306,6 +318,7 @@ export default async function transactionsRoutes(app: FastifyInstance) {
       response: { 200: { type: 'object', additionalProperties: true } },
     },
   }, async (): Promise<StakingInfo> => {
+    return cached('staking', 30_000, () => {
     const now = Math.floor(Date.now() / 1000);
 
     // Active (unspent) stake outputs
@@ -387,6 +400,7 @@ export default async function transactionsRoutes(app: FastifyInstance) {
       stake_value_distribution: bucketCounts,
       top_stakes: topStakes,
     };
+    }); // cached
   });
 
   // GET /api/outputs/:hash — Output detail

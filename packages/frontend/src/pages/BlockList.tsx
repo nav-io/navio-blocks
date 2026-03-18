@@ -26,7 +26,7 @@ export default function BlockList() {
   };
 
   return (
-    <div className="grid-bg min-h-screen">
+    <div className="min-h-screen">
       <div className="max-w-6xl mx-auto px-4 py-12">
         <h1 className="text-3xl sm:text-4xl font-bold gradient-text mb-8">Blocks</h1>
 

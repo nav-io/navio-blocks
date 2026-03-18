@@ -220,7 +220,7 @@ export default function Home() {
     : null;
 
   return (
-    <div className="grid-bg min-h-screen">
+    <div className="min-h-screen">
       {/* Hero */}
       <section className="text-center pt-16 pb-10 px-4">
         <h1 className="text-4xl sm:text-5xl md:text-6xl pb-6 font-bold gradient-text mb-4">

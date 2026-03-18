@@ -3,7 +3,7 @@ import { Link, NavLink } from 'react-router-dom';
 import { SearchBar } from '../components/SearchBar';
 import { PriceTicker } from '../components/PriceTicker';
 
-const NAVIO_LOGO_URL = 'https://nav.io/assets/images/logo.svg';
+const NAVIO_LOGO_URL = '/navio-logo.svg';
 
 const navLinks = [
   { to: '/', label: 'Home' },

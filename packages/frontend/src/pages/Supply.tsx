@@ -63,7 +63,7 @@ export default function Supply() {
   if (!supply) return null;
 
   return (
-    <div className="grid-bg min-h-screen">
+    <div className="min-h-screen">
       {/* Header */}
 
 

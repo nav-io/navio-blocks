@@ -84,7 +84,7 @@ export default function BlockDetail() {
 
   if (blockLoading) {
     return (
-      <div className="grid-bg min-h-screen">
+      <div className="min-h-screen">
         <div className="max-w-6xl mx-auto px-4 py-12">
           <Loader text="Loading block..." />
         </div>
@@ -94,7 +94,7 @@ export default function BlockDetail() {
 
   if (blockError || !block) {
     return (
-      <div className="grid-bg min-h-screen">
+      <div className="min-h-screen">
         <div className="max-w-6xl mx-auto px-4 py-12">
           <div className="glow-card text-center py-16">
             <p className="text-neon-pink text-xl mb-2">Block not found</p>
@@ -118,7 +118,7 @@ export default function BlockDetail() {
   const netSupplyDelta = supply ? supply.block_reward - supply.fees_burned : null;
 
   return (
-    <div className="grid-bg min-h-screen">
+    <div className="min-h-screen">
       <div className="max-w-6xl mx-auto px-4 py-12">
         {/* Navigation arrows */}
         <div className="flex items-center justify-between mb-6">

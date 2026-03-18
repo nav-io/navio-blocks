@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { queryOne, queryAll, queryScalar } from '../db.js';
+import { cached } from '../cache.js';
 import type {
   NetworkType,
   SupplyInfo,
@@ -78,6 +79,7 @@ export default async function supplyRoutes(app: FastifyInstance) {
       },
     },
   }, async (): Promise<SupplyInfo> => {
+    return cached('supply', 15_000, () => {
     const latest = queryOne<BlockSupply>(
       'SELECT height, block_reward, fees_burned, fees_collected, total_supply FROM block_supply ORDER BY height DESC LIMIT 1',
     );
@@ -96,6 +98,7 @@ export default async function supplyRoutes(app: FastifyInstance) {
       height: latest?.height ?? 0,
       network,
     };
+    }); // cached
   });
 
   // ----------------------------------------------------------------
@@ -134,6 +137,7 @@ export default async function supplyRoutes(app: FastifyInstance) {
     },
   }, async (request): Promise<SupplyChartPoint[]> => {
     const period = (request.query.period ?? 'all') as SupplyChartPeriod;
+    return cached(`supply:chart:${period}`, 60_000, () => {
 
     // Count rows in the relevant window so we can compute the sampling step.
     const now = Math.floor(Date.now() / 1000);
@@ -158,42 +162,47 @@ export default async function supplyRoutes(app: FastifyInstance) {
     const TARGET_POINTS = 500;
     const step = Math.max(1, Math.floor(totalRows / TARGET_POINTS));
 
-    // Build the main query. We use a running SUM for total_burned via a
-    // window function, but SQLite may not support that efficiently on older
-    // builds. Instead, we compute a cumulative burned with a correlated
-    // scalar sub-query which is safe for all SQLite versions.
+    // Use a CTE with window function for cumulative burned, then sample.
     let dataSql: string;
     const dataParams: unknown[] = [];
 
     if (cutoff !== null) {
       dataSql = `
-        SELECT
-          b.timestamp,
-          bs.height,
-          bs.total_supply,
-          (SELECT COALESCE(SUM(bs2.fees_burned), 0) FROM block_supply bs2 WHERE bs2.height <= bs.height) AS total_burned
-        FROM block_supply bs
-        JOIN blocks b ON b.height = bs.height
-        WHERE b.timestamp >= ?
-          AND bs.height % ? = 0
-        ORDER BY bs.height`;
+        WITH cumulative AS (
+          SELECT
+            b.timestamp,
+            bs.height,
+            bs.total_supply,
+            SUM(bs.fees_burned) OVER (ORDER BY bs.height) AS total_burned
+          FROM block_supply bs
+          JOIN blocks b ON b.height = bs.height
+        )
+        SELECT timestamp, height, total_supply, total_burned
+        FROM cumulative
+        WHERE timestamp >= ? AND height % ? = 0
+        ORDER BY height`;
       dataParams.push(cutoff, step);
     } else {
       dataSql = `
-        SELECT
-          b.timestamp,
-          bs.height,
-          bs.total_supply,
-          (SELECT COALESCE(SUM(bs2.fees_burned), 0) FROM block_supply bs2 WHERE bs2.height <= bs.height) AS total_burned
-        FROM block_supply bs
-        JOIN blocks b ON b.height = bs.height
-        WHERE bs.height % ? = 0
-        ORDER BY bs.height`;
+        WITH cumulative AS (
+          SELECT
+            b.timestamp,
+            bs.height,
+            bs.total_supply,
+            SUM(bs.fees_burned) OVER (ORDER BY bs.height) AS total_burned
+          FROM block_supply bs
+          JOIN blocks b ON b.height = bs.height
+        )
+        SELECT timestamp, height, total_supply, total_burned
+        FROM cumulative
+        WHERE height % ? = 0
+        ORDER BY height`;
       dataParams.push(step);
     }
 
     const rows = queryAll<SupplyChartPoint>(dataSql, ...dataParams);
     return rows;
+    }); // cached
   });
 
   // ----------------------------------------------------------------
@@ -265,6 +274,7 @@ export default async function supplyRoutes(app: FastifyInstance) {
       },
     },
   }, async (): Promise<BurnedSummary> => {
+    return cached('supply:burned', 30_000, () => {
     const totalBurned = queryScalar<number>(
       'SELECT COALESCE(SUM(fees_burned), 0) FROM block_supply',
     );
@@ -301,5 +311,6 @@ export default async function supplyRoutes(app: FastifyInstance) {
       burned_7d: burned7d,
       burned_30d: burned30d,
     };
+    }); // cached
   });
 }
