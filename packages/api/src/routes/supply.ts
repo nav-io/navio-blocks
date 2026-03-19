@@ -139,16 +139,21 @@ export default async function supplyRoutes(app: FastifyInstance) {
     const period = (request.query.period ?? 'all') as SupplyChartPeriod;
     return cached(`supply:chart:${period}`, 60_000, () => {
 
+    // Anchor chart windows to chain data time, not wall-clock time.
+    const latestTimestamp = queryScalar<number>('SELECT COALESCE(MAX(timestamp), 0) FROM blocks');
+    if (!latestTimestamp || latestTimestamp <= 0) {
+      return [];
+    }
+
     // Count rows in the relevant window so we can compute the sampling step.
-    const now = Math.floor(Date.now() / 1000);
     let countSql = 'SELECT COUNT(*) FROM block_supply';
     const countParams: unknown[] = [];
 
     const cutoffs: Record<string, number | null> = {
-      '24h': now - 86_400,
-      '7d': now - 7 * 86_400,
-      '30d': now - 30 * 86_400,
-      '1y': now - 365 * 86_400,
+      '24h': latestTimestamp - 86_400,
+      '7d': latestTimestamp - 7 * 86_400,
+      '30d': latestTimestamp - 30 * 86_400,
+      '1y': latestTimestamp - 365 * 86_400,
       all: null,
     };
     const cutoff = cutoffs[period] ?? null;

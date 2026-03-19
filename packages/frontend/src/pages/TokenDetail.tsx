@@ -156,7 +156,7 @@ export default function TokenDetail() {
 
       {data.metadata.length > 0 && (
         <GlowCard hover={false}>
-          <h3 className="text-sm font-semibold uppercase tracking-wider text-white/60 mb-3">Collection Metadata</h3>
+          <h3 className="text-sm font-semibold uppercase tracking-wider text-white/60 mb-3">Token Metadata</h3>
           <div className="space-y-2">
             {data.metadata.map((entry) => (
               <div key={`${entry.key}:${entry.value}`} className="flex items-start gap-2">

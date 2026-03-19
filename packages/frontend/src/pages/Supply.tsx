@@ -10,12 +10,11 @@ import Loader from '../components/Loader';
 const PERIODS = ['24h', '7d', '30d', '1y', 'all'] as const;
 type SupplyPeriod = (typeof PERIODS)[number];
 
-const PERIOD_TO_SECONDS: Record<SupplyPeriod, number> = {
+const PERIOD_TO_SECONDS: Record<Exclude<SupplyPeriod, 'all'>, number> = {
   '24h': 24 * 60 * 60,
   '7d': 7 * 24 * 60 * 60,
   '30d': 30 * 24 * 60 * 60,
   '1y': 365 * 24 * 60 * 60,
-  all: 365 * 24 * 60 * 60,
 };
 
 interface SupplyProjection {
@@ -60,7 +59,13 @@ function buildSupplyProjection(
     ((latest.total_burned - baseline.total_burned) / durationSec) * 86_400;
   const netPerDaySat = emissionPerDaySat - burnPerDaySat;
 
-  const horizonSec = PERIOD_TO_SECONDS[period] ?? PERIOD_TO_SECONDS.all;
+  const historicalSpanSec = latest.timestamp - sorted[0].timestamp;
+  const fallbackHorizonSec = period === 'all'
+    ? 365 * 24 * 60 * 60
+    : PERIOD_TO_SECONDS[period];
+  const horizonSec = historicalSpanSec > 0
+    ? historicalSpanSec
+    : fallbackHorizonSec;
   const steps = 48;
   const projectionPoints: { timestamp: number; value: number }[] = [];
 
@@ -201,7 +206,7 @@ export default function Supply() {
               {supplyProjection && (
                 <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-mono">
                   <span className="inline-block rounded px-2 py-0.5 border border-emerald-400/35 bg-emerald-400/10 text-emerald-200">
-                    Simulated
+                    Supply Projection:
                   </span>
                   <span className="text-white/45">
                     Emission: {formatSignedNavPerDay(supplyProjection.emissionPerDaySat)}
