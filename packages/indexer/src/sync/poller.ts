@@ -97,13 +97,23 @@ export class Poller {
 
     try {
       let syncHeight = this.queries.getSyncHeight() ?? -1;
+      const chainHeight = await this.rpc.getBlockCount();
+
+      // Handle stale DB state where local sync height is above current node tip.
+      // This can happen after node data resets / network switches / partial DB restores.
+      if (syncHeight > chainHeight) {
+        const pruneFrom = chainHeight + 1;
+        console.warn(
+          `[sync] Local sync height ${syncHeight} is above chain tip ${chainHeight}; pruning DB from height ${pruneFrom}`
+        );
+        this.queries.reindexFrom(pruneFrom);
+        syncHeight = this.queries.getSyncHeight() ?? chainHeight;
+      }
 
       // Check for reorgs if we have synced at least one block
       if (syncHeight >= 0) {
-        syncHeight = await detectReorg(this.rpc, this.queries, syncHeight);
+        syncHeight = await detectReorg(this.rpc, this.queries, syncHeight, chainHeight);
       }
-
-      const chainHeight = await this.rpc.getBlockCount();
 
       if (syncHeight >= chainHeight) {
         return;

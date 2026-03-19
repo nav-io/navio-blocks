@@ -13,9 +13,11 @@ import type { Queries } from "../db/queries.js";
 export async function detectReorg(
   rpc: RpcClient,
   queries: Queries,
-  syncHeight: number
+  syncHeight: number,
+  chainHeight?: number
 ): Promise<number> {
-  let height = syncHeight;
+  const tip = typeof chainHeight === "number" ? chainHeight : await rpc.getBlockCount();
+  let height = Math.min(syncHeight, tip);
 
   while (height > 0) {
     const localBlock = queries.getBlockByHeight(height);
