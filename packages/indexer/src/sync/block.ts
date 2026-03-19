@@ -1,3 +1,4 @@
+import * as crypto from "node:crypto";
 import type { Block, Transaction, Output, Input, NetworkType, OutputType } from "@navio-blocks/shared";
 import { getExpectedBlockReward } from "./supply.js";
 
@@ -139,7 +140,7 @@ function extractTokenId(rpcVout: Record<string, unknown>): string | undefined {
     (rpcVout.scriptPubKey as Record<string, unknown> | undefined)?.tokenid,
   ];
   for (const c of candidates) {
-    if (typeof c === "string" && c.length > 0) return c;
+    if (typeof c === "string" && c.trim().length > 0) return c.trim().toLowerCase();
   }
   return undefined;
 }
@@ -199,9 +200,83 @@ interface DecodedPredicate {
   token_type?: "token" | "nft" | "unknown";
   public_key_hex?: string;
   max_supply?: number;
+  amount?: string;
   metadata?: Record<string, string>;
   nft_id?: string;
   nft_metadata?: Record<string, string>;
+}
+
+function normalizeHexString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase().replace(/^0x/, "");
+  if (normalized.length === 0 || normalized.length % 2 !== 0) return undefined;
+  if (!/^[0-9a-f]+$/.test(normalized)) return undefined;
+  return normalized;
+}
+
+function sha256d(bytes: Uint8Array): Buffer {
+  const first = crypto.createHash("sha256").update(bytes).digest();
+  return crypto.createHash("sha256").update(first).digest();
+}
+
+function tokenIdFromPublicKeyHex(publicKeyHex: string | undefined): string | undefined {
+  const normalized = normalizeHexString(publicKeyHex);
+  if (!normalized) return undefined;
+  const hash = sha256d(Buffer.from(normalized, "hex"));
+  return Buffer.from(hash).reverse().toString("hex");
+}
+
+function deriveTokenIdFromPredicate(
+  tokenId: string | undefined,
+  predicate: DecodedPredicate | undefined
+): string | undefined {
+  if (!predicate) return tokenId;
+  if (tokenId && !isNativeTokenId(tokenId)) return tokenId;
+
+  const base = tokenIdFromPublicKeyHex(predicate.public_key_hex);
+  if (!base) return tokenId;
+  if (predicate.op === 2 && predicate.nft_id) {
+    return `${base}#${predicate.nft_id}`;
+  }
+  return base;
+}
+
+function predicateOpToLabel(op: number | undefined): string | undefined {
+  switch (op) {
+    case 0:
+      return "CREATE_TOKEN";
+    case 1:
+      return "MINT_TOKEN";
+    case 2:
+      return "MINT_NFT";
+    case 3:
+      return "PAY_FEE";
+    case 4:
+      return "DATA";
+    default:
+      return undefined;
+  }
+}
+
+function predicateArgsFromDecoded(
+  predicate: DecodedPredicate | undefined
+): Record<string, unknown> | undefined {
+  if (!predicate) return undefined;
+
+  const args: Record<string, unknown> = {};
+  if (predicate.public_key_hex) args.public_key = predicate.public_key_hex;
+  if (predicate.token_type) args.token_type = predicate.token_type;
+  if (predicate.max_supply != null) args.max_supply = predicate.max_supply;
+  if (predicate.amount != null) args.amount = predicate.amount;
+  if (predicate.nft_id != null) args.nft_id = predicate.nft_id;
+  if (predicate.metadata && Object.keys(predicate.metadata).length > 0) {
+    args.metadata = predicate.metadata;
+  }
+  if (predicate.nft_metadata && Object.keys(predicate.nft_metadata).length > 0) {
+    args.nft_metadata = predicate.nft_metadata;
+  }
+
+  return Object.keys(args).length > 0 ? args : undefined;
 }
 
 const INT64_MAX = 9223372036854775807n;
@@ -397,10 +472,11 @@ function decodePredicate(predicateBytes: Uint8Array): DecodedPredicate | undefin
     if (op === 1) {
       // MINT_TOKEN: op (u8), publicKey, amount(i64)
       const publicKey = reader.readBytes(MCL_G1_SIZE);
-      reader.readI64LE();
+      const amount = reader.readI64LE();
       return {
         op,
         public_key_hex: Buffer.from(publicKey).toString("hex"),
+        amount: amount.toString(),
       };
     }
 
@@ -440,11 +516,30 @@ function decodePredicate(predicateBytes: Uint8Array): DecodedPredicate | undefin
 
 function extractPredicateHex(rpcVout: Record<string, unknown>): string | undefined {
   const direct = rpcVout.predicateHex ?? rpcVout.predicate_hex;
-  if (typeof direct === "string" && direct.length > 0) return direct;
+  const normalizedDirect = normalizeHexString(direct);
+  if (normalizedDirect) return normalizedDirect;
+  const directFromPredicate = normalizeHexString(rpcVout.predicate);
+  if (directFromPredicate) return directFromPredicate;
 
   const spk = rpcVout.scriptPubKey as Record<string, unknown> | undefined;
   const nested = spk?.predicateHex ?? spk?.predicate_hex;
-  if (typeof nested === "string" && nested.length > 0) return nested;
+  const normalizedNested = normalizeHexString(nested);
+  if (normalizedNested) return normalizedNested;
+  const nestedFromPredicate = normalizeHexString(spk?.predicate);
+  if (nestedFromPredicate) return nestedFromPredicate;
+  return undefined;
+}
+
+function extractPredicateLabel(rpcVout: Record<string, unknown>): string | undefined {
+  if (typeof rpcVout.predicate === "string" && rpcVout.predicate.trim().length > 0) {
+    return rpcVout.predicate.trim().toUpperCase();
+  }
+
+  const spk = rpcVout.scriptPubKey as Record<string, unknown> | undefined;
+  if (typeof spk?.predicate === "string" && spk.predicate.trim().length > 0) {
+    return spk.predicate.trim().toUpperCase();
+  }
+
   return undefined;
 }
 
@@ -459,14 +554,16 @@ function extractDecodedPredicateFromVout(rpcVout: Record<string, unknown>): Deco
   }
 
   // Fallback: core also provides a human-friendly predicate label.
-  const predicateLabel = typeof rpcVout.predicate === "string" ? rpcVout.predicate : undefined;
+  const predicateLabel = extractPredicateLabel(rpcVout);
   if (!predicateLabel) return undefined;
 
   switch (predicateLabel) {
     case "CREATE_TOKEN":
       return { op: 0 };
+    case "MINT":
     case "MINT_TOKEN":
       return { op: 1 };
+    case "NFT_MINT":
     case "MINT_NFT":
       return { op: 2 };
     case "PAY_FEE":
@@ -480,10 +577,11 @@ function extractDecodedPredicateFromVout(rpcVout: Record<string, unknown>): Deco
 
 function parsePredicatesByVoutFromTxHex(txHex: string): Map<number, DecodedPredicate> {
   const decoded = new Map<number, DecodedPredicate>();
-  if (!txHex || txHex.length % 2 !== 0) return decoded;
+  const normalizedTxHex = normalizeHexString(txHex);
+  if (!normalizedTxHex) return decoded;
 
   try {
-    const bytes = new Uint8Array(Buffer.from(txHex, "hex"));
+    const bytes = new Uint8Array(Buffer.from(normalizedTxHex, "hex"));
     const reader = new ByteReader(bytes);
 
     const version = reader.readU32LE();
@@ -581,10 +679,14 @@ function extractTokenCollectionRecord(
   blockHeight: number,
   blockTimestamp: number,
 ): TokenCollectionRecord | undefined {
-  if (!tokenId || isNativeTokenId(tokenId)) return undefined;
   if (outputType !== "token_create" && outputType !== "nft_create") return undefined;
 
-  const { base } = extractTokenParts(tokenId);
+  const effectiveTokenId = !tokenId || isNativeTokenId(tokenId)
+    ? tokenIdFromPublicKeyHex(predicate?.public_key_hex)
+    : tokenId;
+  if (!effectiveTokenId) return undefined;
+
+  const { base } = extractTokenParts(effectiveTokenId);
   if (!base) return undefined;
 
   const tokenType =
@@ -617,10 +719,14 @@ function extractNftItemRecord(
   blockHeight: number,
   blockTimestamp: number,
 ): NftItemRecord | undefined {
-  if (!tokenId || isNativeTokenId(tokenId)) return undefined;
   if (outputType !== "nft_mint") return undefined;
 
-  const tokenParts = extractTokenParts(tokenId);
+  const effectiveTokenId = !tokenId || isNativeTokenId(tokenId)
+    ? tokenIdFromPublicKeyHex(predicate?.public_key_hex)
+    : tokenId;
+  if (!effectiveTokenId) return undefined;
+
+  const tokenParts = extractTokenParts(effectiveTokenId);
   const base = tokenParts.base;
   const nftIndex =
     tokenParts.nftIndex ??
@@ -670,23 +776,23 @@ function classifyOutputType(
     return "htlc";
   }
 
-  // 6. Token/NFT classification via tokenId (non-native)
+  // 6. Predicate-driven token operations.
+  const op = predicate?.op;
+  if (op === 0) {
+    const predicateType = predicate?.token_type;
+    if (predicateType === "nft") return "nft_create";
+    if (predicateType === "token") return "token_create";
+    return tokenId?.includes("#") ? "nft_create" : "token_create";
+  }
+  if (op === 1) return "token_mint";
+  if (op === 2) return "nft_mint";
+
+  // 7. Token output without token-operation predicate — treat as transfer.
   if (tokenId && !isNativeTokenId(tokenId)) {
-    const isNft = tokenId.includes("#");
-    const op = predicate?.op;
-    if (op === 0) {
-      const predicateType = predicate?.token_type;
-      if (predicateType === "nft") return "nft_create";
-      if (predicateType === "token") return "token_create";
-      return isNft ? "nft_create" : "token_create";
-    }
-    if (op === 1) return "token_mint";
-    if (op === 2) return "nft_mint";
-    // Token output without predicate op — still native coin movement
     return "transfer";
   }
 
-  // 7. Native NAV output — standard script types, nonstandard, BLSCT, or anything else
+  // 8. Native NAV output — standard script types, nonstandard, BLSCT, or anything else
   return "transfer";
 }
 
@@ -842,12 +948,26 @@ export function parseBlock(rpcBlock: Record<string, unknown>, network: NetworkTy
       const outputHash = (rpcVout.output_hash as string) ?? (rpcVout.outputhash as string) ?? (rpcVout.hash as string) ?? "";
       const blsct = isBlsctOutput(rpcVout);
       if (blsct) txIsBlsct = true;
-      if (hasTokenFields(rpcVout)) txHasToken = true;
-
-      const tokenId = extractTokenId(rpcVout);
+      const rawTokenId = extractTokenId(rpcVout);
       const decodedPredicate =
         extractDecodedPredicateFromVout(rpcVout) ??
         predicatesByVout.get(voutIndex);
+      const tokenId = deriveTokenIdFromPredicate(rawTokenId, decodedPredicate);
+      const predicateHex = extractPredicateHex(rpcVout);
+      const explicitPredicateLabel = extractPredicateLabel(rpcVout);
+      const predicateLabel =
+        predicateOpToLabel(decodedPredicate?.op) ??
+        (explicitPredicateLabel && explicitPredicateLabel.length > 0
+          ? explicitPredicateLabel
+          : undefined);
+      const predicateArgs = predicateArgsFromDecoded(decodedPredicate);
+
+      if (hasTokenFields(rpcVout)) txHasToken = true;
+      if (tokenId && !isNativeTokenId(tokenId)) txHasToken = true;
+      if (decodedPredicate && (decodedPredicate.op === 0 || decodedPredicate.op === 1 || decodedPredicate.op === 2)) {
+        txHasToken = true;
+      }
+
       const spkFields = extractSpkFields(rpcVout);
       const outputType = classifyOutputType(rpcVout, isCoinbaseTx, blsct, tokenId, decodedPredicate);
       const txid = rpcTx.txid as string;
@@ -889,6 +1009,9 @@ export function parseBlock(rpcBlock: Record<string, unknown>, network: NetworkTy
           spk_type: spkFields.spk_type,
           spk_hex: spkFields.spk_hex,
           token_id: tokenId,
+          predicate: predicateLabel,
+          predicate_hex: predicateHex,
+          predicate_args: predicateArgs,
           spending_key: fields.spending_key,
           ephemeral_key: fields.ephemeral_key,
           blinding_key: fields.blinding_key,
@@ -906,6 +1029,9 @@ export function parseBlock(rpcBlock: Record<string, unknown>, network: NetworkTy
           spk_type: spkFields.spk_type,
           spk_hex: spkFields.spk_hex,
           token_id: tokenId,
+          predicate: predicateLabel,
+          predicate_hex: predicateHex,
+          predicate_args: predicateArgs,
         });
       }
     }

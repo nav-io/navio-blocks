@@ -64,7 +64,13 @@ function OutputRow({ output, index }: { output: Output; index: number }) {
   const spkDimmed = output.spk_hex === '51';
   const tokenParts = splitTokenId(output.token_id);
   const tokenBase = tokenParts?.base;
+  const tokenLinkBase = tokenBase || (output.token_id ? output.token_id.replace(/#.*$/, '') : undefined);
   const nftIndex = tokenParts?.nftIndex;
+  const predicateArgs =
+    output.predicate_args && typeof output.predicate_args === 'object'
+      ? (output.predicate_args as Record<string, unknown>)
+      : undefined;
+  const mintAmount = predicateArgs?.amount;
 
   return (
     <div className="py-3 border-b border-white/5 last:border-b-0">
@@ -92,13 +98,18 @@ function OutputRow({ output, index }: { output: Output; index: number }) {
               )}
               {output.output_type && <OutputTypeBadge type={output.output_type} />}
               {output.is_blsct && <PrivacyBadge isBlsct />}
-              {isRealToken(output.token_id) && (
-                <span className={`inline-block rounded px-2 py-0.5 text-xs font-mono font-medium border ${
-                  output.token_id!.includes('#')
-                    ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
-                    : 'bg-teal-500/20 text-teal-300 border-teal-500/30'
-                }`}>
+                {isRealToken(output.token_id) && (
+                  <span className={`inline-block rounded px-2 py-0.5 text-xs font-mono font-medium border ${
+                    output.token_id!.includes('#')
+                      ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
+                      : 'bg-teal-500/20 text-teal-300 border-teal-500/30'
+                  }`}>
                   {output.token_id!.includes('#') ? 'NFT' : 'Token'}
+                </span>
+              )}
+              {output.predicate && (
+                <span className="inline-block rounded px-2 py-0.5 text-xs font-mono font-medium border border-amber-500/30 bg-amber-500/15 text-amber-200">
+                  {output.predicate}
                 </span>
               )}
             </div>
@@ -112,17 +123,17 @@ function OutputRow({ output, index }: { output: Output; index: number }) {
             {isRealToken(output.token_id) && (
               <div className="flex items-center gap-1.5">
                 <span className="text-[10px] uppercase tracking-wider text-white/30 shrink-0">Token</span>
-                {tokenBase ? (
+                {tokenLinkBase ? (
                   nftIndex ? (
                     <Link
-                      to={`/nft/${tokenBase}/${nftIndex}`}
+                      to={`/nft/${tokenLinkBase}/${nftIndex}`}
                       className="font-mono text-xs text-neon-blue hover:text-neon-purple transition-colors"
                     >
                       {truncateHash(output.token_id!, 10)}
                     </Link>
                   ) : (
                     <Link
-                      to={`/token/${tokenBase}`}
+                      to={`/token/${tokenLinkBase}`}
                       className="font-mono text-xs text-neon-blue hover:text-neon-purple transition-colors"
                     >
                       {truncateHash(output.token_id!, 10)}
@@ -131,6 +142,13 @@ function OutputRow({ output, index }: { output: Output; index: number }) {
                 ) : (
                   <span className="font-mono text-xs text-white/60">{truncateHash(output.token_id!, 10)}</span>
                 )}
+              </div>
+            )}
+
+            {mintAmount != null && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] uppercase tracking-wider text-white/30 shrink-0">Mint</span>
+                <span className="font-mono text-xs text-white/70">{String(mintAmount)}</span>
               </div>
             )}
 

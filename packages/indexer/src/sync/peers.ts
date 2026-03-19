@@ -8,6 +8,7 @@ import type { Queries } from "../db/queries.js";
 const IP_API_RATE_LIMIT_MS = 1400; // ~43 req/min, stays safely under 45/min
 const GEO_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const PROBE_CACHE_TTL_MS = 8 * 60 * 1000;
+const PEER_HOSTNAME_CACHE_TTL_MS = 10 * 60 * 1000;
 const P2P_MAX_PAYLOAD_BYTES = 4 * 1024 * 1024;
 const P2P_HEADER_BYTES = 24;
 const P2P_COMMAND_BYTES = 12;
@@ -98,6 +99,11 @@ interface KnownNodeAddress {
 
 interface GeoCacheValue {
   geo: IpApiResponse;
+  expiresAt: number;
+}
+
+interface HostResolveCacheValue {
+  ip: string;
   expiresAt: number;
 }
 
@@ -209,13 +215,58 @@ function parseAddressPort(addr: string): { host: string; port: number } | null {
   return { host, port };
 }
 
-function extractIp(addr: string): string {
-  if (addr.startsWith("[")) {
-    const closing = addr.indexOf("]");
-    return closing > 1 ? addr.slice(1, closing) : addr;
+function normalizeIpAddress(ip: string): string {
+  const ipType = net.isIP(ip);
+  if (ipType === 4) return ip;
+  if (ipType === 6) return ip.toLowerCase();
+  return ip;
+}
+
+const hostResolveCache = new Map<string, HostResolveCacheValue>();
+async function resolveHostnameToIp(host: string): Promise<string | null> {
+  const cacheKey = host.toLowerCase();
+  const cached = hostResolveCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.ip;
+
+  try {
+    const resolved = await lookup(host, { all: true, verbatim: false });
+    const preferred =
+      resolved.find((entry) => net.isIP(entry.address) === 4) ??
+      resolved.find((entry) => net.isIP(entry.address) === 6);
+    if (!preferred) return null;
+
+    const ip = normalizeIpAddress(preferred.address);
+    hostResolveCache.set(cacheKey, {
+      ip,
+      expiresAt: Date.now() + PEER_HOSTNAME_CACHE_TTL_MS,
+    });
+    return ip;
+  } catch {
+    return null;
   }
-  const lastColon = addr.lastIndexOf(":");
-  return lastColon !== -1 ? addr.slice(0, lastColon) : addr;
+}
+
+async function canonicalizePeerAddress(
+  addr: string
+): Promise<{ addr: string; ip: string } | null> {
+  const parsed = parseAddressPort(addr);
+  if (!parsed) return null;
+
+  const host = parsed.host.trim();
+  if (!host) return null;
+
+  if (net.isIP(host) !== 0) {
+    const ip = normalizeIpAddress(host);
+    return { addr: formatAddress(ip, parsed.port), ip };
+  }
+
+  const normalizedHost = host.toLowerCase();
+  const resolvedIp = await resolveHostnameToIp(normalizedHost);
+  if (!resolvedIp) {
+    return { addr: formatAddress(normalizedHost, parsed.port), ip: normalizedHost };
+  }
+
+  return { addr: formatAddress(resolvedIp, parsed.port), ip: resolvedIp };
 }
 
 function isRoutableIp(ip: string): boolean {
@@ -1088,11 +1139,19 @@ export async function updatePeers(
       const peerId = toNumberSafe(rp.id, NaN);
       if (!Number.isFinite(peerId)) continue;
 
-      const addr = toStringSafe(rp.addr, "");
-      if (!addr) continue;
-      seenAddrs.add(addr);
+      const rawAddr = toStringSafe(rp.addr, "").trim();
+      if (!rawAddr) continue;
 
-      const ip = extractIp(addr);
+      const canonical = await canonicalizePeerAddress(rawAddr);
+      if (!canonical) continue;
+      const addr = canonical.addr;
+      if (seenAddrs.has(addr)) continue;
+      seenAddrs.add(addr);
+      if (rawAddr !== addr) {
+        queries.deletePeerByAddress(rawAddr);
+      }
+
+      const ip = canonical.ip;
       const geo = await geolocateIfAllowed(ip);
 
       const connTime = toNumberSafe(rp.conntime, now);
@@ -1121,8 +1180,30 @@ export async function updatePeers(
     // 2) Seeder-style direct P2P discovery (no RPC addnode/getnodeaddresses dependency).
     const { known: discoveredPeers, crawlReachable } = await crawlPeersViaP2P(network);
 
-    const undiscovered = discoveredPeers
-      .map((entry) => ({ entry, addr: formatAddress(entry.address, entry.port) }))
+    const normalizedDiscovered = await mapLimit(
+      discoveredPeers,
+      P2P_CRAWL_CONCURRENCY,
+      async (entry) => {
+        const sourceAddr = formatAddress(entry.address, entry.port);
+        const canonical = await canonicalizePeerAddress(sourceAddr);
+        if (!canonical) return null;
+        return { entry, sourceAddr, addr: canonical.addr, geoIp: canonical.ip };
+      }
+    );
+
+    const dedupedDiscovered = new Map<
+      string,
+      { entry: KnownNodeAddress; sourceAddr: string; addr: string; geoIp: string }
+    >();
+    for (const candidate of normalizedDiscovered) {
+      if (!candidate) continue;
+      const existing = dedupedDiscovered.get(candidate.addr);
+      if (!existing || candidate.entry.time > existing.entry.time) {
+        dedupedDiscovered.set(candidate.addr, candidate);
+      }
+    }
+
+    const undiscovered = Array.from(dedupedDiscovered.values())
       .filter(({ addr }) => !seenAddrs.has(addr))
       .sort((a, b) => b.entry.time - a.entry.time);
 
@@ -1144,7 +1225,7 @@ export async function updatePeers(
 
     let added = 0;
     let skippedUnreachable = 0;
-    for (const { entry, addr } of undiscovered) {
+    for (const { entry, addr, sourceAddr, geoIp } of undiscovered) {
       const tested = testedSet.has(addr);
       const reachable = tested ? connectivity.get(addr) : undefined;
 
@@ -1159,7 +1240,11 @@ export async function updatePeers(
       }
 
       seenAddrs.add(addr);
-      const geo = await geolocateIfAllowed(entry.address);
+      if (sourceAddr !== addr) {
+        queries.deletePeerByAddress(sourceAddr);
+      }
+
+      const geo = await geolocateIfAllowed(geoIp);
       const lastSeen = toNumberSafe(entry.time, now);
       const discoveredSubversion =
         toStringSafe(entry.subversion, "") ||

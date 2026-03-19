@@ -40,9 +40,15 @@ export default function OutputDetail() {
   const hasToken = isRealToken(output.token_id);
   const tokenParts = splitTokenId(output.token_id);
   const tokenBase = tokenParts?.base ?? '';
+  const tokenLinkBase = tokenBase || (output.token_id ? output.token_id.replace(/#.*$/, '') : '');
   const nftIndex = tokenParts?.nftIndex;
   const isNft = hasToken && Boolean(nftIndex);
   const spkDimmed = output.spk_hex === '51'; // OP_TRUE
+  const predicateArgs =
+    output.predicate_args && typeof output.predicate_args === 'object'
+      ? (output.predicate_args as Record<string, unknown>)
+      : undefined;
+  const mintAmount = predicateArgs?.amount;
 
   return (
     <div className="space-y-6">
@@ -143,27 +149,67 @@ export default function OutputDetail() {
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <span className="text-[10px] uppercase tracking-wider text-white/30">Token ID</span>
-              {tokenBase ? (
+              {tokenLinkBase ? (
                 <Link
-                  to={`/token/${tokenBase}`}
+                  to={`/token/${tokenLinkBase}`}
                   className="font-mono text-sm text-neon-blue hover:text-neon-pink transition-colors break-all"
                 >
-                  {tokenBase}
+                  {tokenLinkBase}
                 </Link>
               ) : (
                 <span className="font-mono text-sm text-white break-all">{output.token_id}</span>
               )}
-              {tokenBase && <CopyButton text={tokenBase} />}
+              {tokenLinkBase && <CopyButton text={tokenLinkBase} />}
             </div>
             {isNft && nftIndex && (
               <div className="flex items-center gap-2">
                 <span className="text-[10px] uppercase tracking-wider text-white/30">NFT Sub-ID</span>
                 <Link
-                  to={`/nft/${tokenBase}/${nftIndex}`}
+                  to={`/nft/${tokenLinkBase}/${nftIndex}`}
                   className="font-mono text-sm text-neon-blue hover:text-neon-pink transition-colors"
                 >
                   {nftIndex}
                 </Link>
+              </div>
+            )}
+            {mintAmount != null && (
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] uppercase tracking-wider text-white/30">Mint Amount</span>
+                <span className="font-mono text-sm text-white">{String(mintAmount)}</span>
+              </div>
+            )}
+          </div>
+        </GlowCard>
+      )}
+
+      {/* Predicate */}
+      {output.predicate && (
+        <GlowCard hover={false}>
+          <h3 className="text-sm font-semibold uppercase tracking-wider text-white/60 mb-3">
+            Predicate
+          </h3>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] uppercase tracking-wider text-white/30">Type</span>
+              <span className="font-mono text-sm text-white">{output.predicate}</span>
+            </div>
+            {output.predicate_hex && (
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] uppercase tracking-wider text-white/30">Hex</span>
+                <span className="font-mono text-xs text-white/70 break-all">{output.predicate_hex}</span>
+              </div>
+            )}
+            {predicateArgs && Object.keys(predicateArgs).length > 0 && (
+              <div className="space-y-1">
+                <p className="text-[10px] uppercase tracking-wider text-white/30">Arguments</p>
+                {Object.entries(predicateArgs).map(([key, value]) => (
+                  <div key={key} className="flex items-start gap-2">
+                    <span className="font-mono text-xs text-white/40 min-w-[96px]">{key}</span>
+                    <span className="font-mono text-xs text-white/70 break-all">
+                      {typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value)}
+                    </span>
+                  </div>
+                ))}
               </div>
             )}
           </div>

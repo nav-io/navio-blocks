@@ -90,6 +90,19 @@ function normalizeOutputType(raw: unknown): string {
   return t;
 }
 
+function parsePredicateArgs(raw: unknown): Record<string, unknown> | undefined {
+  if (typeof raw !== "string" || raw.trim() === "") return undefined;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function toTokenActivity(row: Record<string, unknown>): TokenActivity {
   const spendingTxid = typeof row.spending_txid === "string" ? row.spending_txid : null;
   const spendingVinRaw = row.spending_vin;
@@ -120,6 +133,9 @@ function toTokenActivity(row: Record<string, unknown>): TokenActivity {
     spk_type: typeof row.spk_type === "string" ? row.spk_type : undefined,
     spk_hex: typeof row.spk_hex === "string" ? row.spk_hex : undefined,
     token_id: typeof row.token_id === "string" ? row.token_id : undefined,
+    predicate: typeof row.predicate === "string" ? row.predicate : undefined,
+    predicate_hex: typeof row.predicate_hex === "string" ? row.predicate_hex : undefined,
+    predicate_args: parsePredicateArgs(row.predicate_args_json),
     block_height: Number(row.block_height ?? 0),
     timestamp: Number(row.timestamp ?? 0),
     spent: Boolean(spendingTxid),
@@ -408,6 +424,7 @@ export default async function tokenRoutes(app: FastifyInstance) {
          o.output_hash, o.txid, o.n, o.value_sat, o.address,
          o.spending_key, o.ephemeral_key, o.blinding_key, o.view_tag,
          o.is_blsct, o.output_type, o.spk_type, o.spk_hex, o.token_id,
+         o.predicate, o.predicate_hex, o.predicate_args_json,
          t.block_height, b.timestamp,
          i.txid AS spending_txid, i.vin AS spending_vin
        FROM outputs o
@@ -590,6 +607,7 @@ export default async function tokenRoutes(app: FastifyInstance) {
          o.output_hash, o.txid, o.n, o.value_sat, o.address,
          o.spending_key, o.ephemeral_key, o.blinding_key, o.view_tag,
          o.is_blsct, o.output_type, o.spk_type, o.spk_hex, o.token_id,
+         o.predicate, o.predicate_hex, o.predicate_args_json,
          t.block_height, b.timestamp,
          i.txid AS spending_txid, i.vin AS spending_vin
        FROM outputs o

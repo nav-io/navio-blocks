@@ -267,7 +267,14 @@ export default function OutputList() {
                       </Link>
                     </td>
                     <td className="py-3 pr-4">
-                      {o.output_type && <OutputTypeBadge type={o.output_type} />}
+                      <div className="space-y-1">
+                        {o.output_type && <OutputTypeBadge type={o.output_type} />}
+                        {o.predicate && (
+                          <span className="inline-block rounded px-2 py-0.5 text-[10px] font-mono font-medium border border-amber-500/30 bg-amber-500/15 text-amber-200">
+                            {o.predicate}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="py-3 pr-4">
                       {isRealToken(o.token_id) ? (() => {

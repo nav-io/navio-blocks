@@ -67,6 +67,9 @@ export interface Output {
   spk_type?: string;
   spk_hex?: string;
   token_id?: string;
+  predicate?: string;
+  predicate_hex?: string;
+  predicate_args?: Record<string, unknown>;
   // BLSCT fields
   spending_key?: string;
   ephemeral_key?: string;

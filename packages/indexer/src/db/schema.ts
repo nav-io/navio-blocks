@@ -72,7 +72,14 @@ export function initDatabase(dbPath: string): Database.Database {
       ephemeral_key TEXT,
       blinding_key  TEXT,
       view_tag      TEXT,
-      is_blsct      INTEGER DEFAULT 0
+      is_blsct      INTEGER DEFAULT 0,
+      output_type   TEXT DEFAULT 'unknown',
+      spk_type      TEXT,
+      spk_hex       TEXT,
+      token_id      TEXT,
+      predicate     TEXT,
+      predicate_hex TEXT,
+      predicate_args_json TEXT
     );
 
     CREATE TABLE IF NOT EXISTS inputs (
@@ -154,6 +161,9 @@ export function initDatabase(dbPath: string): Database.Database {
   ensureColumn(db, "outputs", "spk_type", "TEXT");
   ensureColumn(db, "outputs", "spk_hex", "TEXT");
   ensureColumn(db, "outputs", "token_id", "TEXT");
+  ensureColumn(db, "outputs", "predicate", "TEXT");
+  ensureColumn(db, "outputs", "predicate_hex", "TEXT");
+  ensureColumn(db, "outputs", "predicate_args_json", "TEXT");
 
   // Indexes on migrated columns (must run after ensureColumn)
   db.exec(`

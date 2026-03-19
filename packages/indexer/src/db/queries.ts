@@ -27,6 +27,7 @@ export class Queries {
   private stmtGetPeerByAddr;
   private stmtUpdatePeerById;
   private stmtDedupePeersByAddr;
+  private stmtDeletePeerByAddr;
   private stmtDeleteOldPeers;
   private stmtInsertPrice;
   private stmtGetLatestPriceTs;
@@ -57,9 +58,9 @@ export class Queries {
 
     this.stmtInsertOutput = db.prepare(`
       INSERT OR REPLACE INTO outputs
-        (output_hash, txid, n, value_sat, address, spending_key, ephemeral_key, blinding_key, view_tag, is_blsct, output_type, spk_type, spk_hex, token_id)
+        (output_hash, txid, n, value_sat, address, spending_key, ephemeral_key, blinding_key, view_tag, is_blsct, output_type, spk_type, spk_hex, token_id, predicate, predicate_hex, predicate_args_json)
       VALUES
-        (@output_hash, @txid, @n, @value_sat, @address, @spending_key, @ephemeral_key, @blinding_key, @view_tag, @is_blsct, @output_type, @spk_type, @spk_hex, @token_id)
+        (@output_hash, @txid, @n, @value_sat, @address, @spending_key, @ephemeral_key, @blinding_key, @view_tag, @is_blsct, @output_type, @spk_type, @spk_hex, @token_id, @predicate, @predicate_hex, @predicate_args_json)
     `);
 
     this.stmtInsertInput = db.prepare(`
@@ -141,6 +142,10 @@ export class Queries {
         GROUP BY addr
       )
     `);
+
+    this.stmtDeletePeerByAddr = db.prepare(
+      `DELETE FROM peers WHERE addr = ?`
+    );
 
     this.stmtDeleteOldPeers = db.prepare(
       `DELETE FROM peers WHERE last_seen < ?`
@@ -257,6 +262,12 @@ export class Queries {
       spk_type: output.spk_type ?? null,
       spk_hex: output.spk_hex ?? null,
       token_id: output.token_id ?? null,
+      predicate: output.predicate ?? null,
+      predicate_hex: output.predicate_hex ?? null,
+      predicate_args_json:
+        output.predicate_args && Object.keys(output.predicate_args).length > 0
+          ? JSON.stringify(output.predicate_args)
+          : null,
     });
   }
 
@@ -349,6 +360,10 @@ export class Queries {
 
   compactPeersByAddress(): void {
     this.stmtDedupePeersByAddr.run();
+  }
+
+  deletePeerByAddress(addr: string): void {
+    this.stmtDeletePeerByAddr.run(addr);
   }
 
   deleteOldPeers(cutoff: number): void {
