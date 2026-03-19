@@ -93,6 +93,7 @@ interface KnownNodeAddress {
   port: number;
   services: string;
   time: number;
+  subversion?: string;
 }
 
 interface GeoCacheValue {
@@ -108,6 +109,8 @@ interface SeedEndpoint {
 interface P2PCrawlResult {
   reachable: boolean;
   handshake: boolean;
+  subversion?: string;
+  protocolVersion?: number;
   addresses: KnownNodeAddress[];
 }
 
@@ -332,6 +335,23 @@ function withReachabilityTag(
   if (reachable === undefined) return base.join(",");
   base.push(`reachable=${reachable ? "1" : "0"}`);
   return base.join(",");
+}
+
+function extractTaggedValue(
+  csv: string,
+  key: string
+): string | undefined {
+  const parts = csv
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+
+  for (const part of parts) {
+    if (!part.startsWith(`${key}=`)) continue;
+    const value = part.slice(key.length + 1);
+    if (value.length > 0) return value;
+  }
+  return undefined;
 }
 
 async function geolocateIp(ip: string): Promise<IpApiResponse> {
@@ -731,13 +751,23 @@ function parseAddrV2Payload(payload: Buffer): KnownNodeAddress[] {
   return out;
 }
 
-function parseVersionSubversion(payload: Buffer): string {
-  if (payload.length < 80) return "";
+function parseVersionInfo(
+  payload: Buffer
+): { protocolVersion: number | undefined; subversion: string } {
+  if (payload.length < 80) return { protocolVersion: undefined, subversion: "" };
+  const protocolVersion = payload.readInt32LE(0);
   const userAgentVar = decodeVarInt(payload, 80);
-  if (!userAgentVar) return "";
+  if (!userAgentVar) return { protocolVersion, subversion: "" };
   const length = Number(userAgentVar.value);
-  if (userAgentVar.next + length > payload.length) return "";
-  return payload.subarray(userAgentVar.next, userAgentVar.next + length).toString("utf8");
+  if (userAgentVar.next + length > payload.length) {
+    return { protocolVersion, subversion: "" };
+  }
+  return {
+    protocolVersion,
+    subversion: payload
+      .subarray(userAgentVar.next, userAgentVar.next + length)
+      .toString("utf8"),
+  };
 }
 
 async function queryPeerAddressesP2P(
@@ -753,6 +783,8 @@ async function queryPeerAddressesP2P(
     let sentVerack = false;
     let sentGetAddr = false;
     let settled = false;
+    let remoteSubversion = "";
+    let remoteProtocolVersion: number | undefined;
     const discovered = new Map<string, KnownNodeAddress>();
 
     const finish = (): void => {
@@ -763,6 +795,8 @@ async function queryPeerAddressesP2P(
       resolve({
         reachable,
         handshake,
+        subversion: remoteSubversion || undefined,
+        protocolVersion: remoteProtocolVersion,
         addresses: Array.from(discovered.values()),
       });
     };
@@ -823,18 +857,10 @@ async function queryPeerAddressesP2P(
             sentGetAddr = true;
           }
 
-          const subversion = parseVersionSubversion(msg.payload);
-          if (subversion) {
-            // Stash subversion as a synthetic service tag for later enrichment.
-            const key = formatAddress(host, port);
-            const existing = discovered.get(key);
-            if (existing) {
-              existing.services = withReachabilityTag(
-                `${existing.services},subver=${subversion}`,
-                undefined
-              );
-              discovered.set(key, existing);
-            }
+          const info = parseVersionInfo(msg.payload);
+          if (info.subversion) remoteSubversion = info.subversion;
+          if (Number.isFinite(info.protocolVersion)) {
+            remoteProtocolVersion = info.protocolVersion;
           }
         } else if (msg.command === "verack") {
           handshake = true;
@@ -941,10 +967,17 @@ async function crawlPeersViaP2P(
       known.set(key, entry);
       return;
     }
-    const shouldReplace =
-      entry.time > existing.time ||
-      (existing.services.length === 0 && entry.services.length > 0);
-    if (shouldReplace) known.set(key, entry);
+    const merged: KnownNodeAddress = {
+      address: existing.address,
+      port: existing.port,
+      services: entry.services.length > 0 ? entry.services : existing.services,
+      time: Math.max(existing.time, entry.time),
+      subversion:
+        entry.subversion && entry.subversion.length > 0
+          ? entry.subversion
+          : existing.subversion,
+    };
+    known.set(key, merged);
   };
 
   for (let round = 1; round <= PEER_DISCOVERY_ROUNDS; round++) {
@@ -978,11 +1011,16 @@ async function crawlPeersViaP2P(
       }
 
       if (net.isIP(endpoint.host) !== 0) {
+        const endpointServicesParts: string[] = [];
+        if (Number.isFinite(result.protocolVersion)) {
+          endpointServicesParts.push(`proto=${result.protocolVersion}`);
+        }
         ingestKnown({
           address: endpoint.host,
           port: endpoint.port,
-          services: withReachabilityTag("", result.reachable),
+          services: withReachabilityTag(endpointServicesParts.join(","), result.reachable),
           time: Math.floor(Date.now() / 1000),
+          subversion: result.subversion,
         });
       }
 
@@ -1123,11 +1161,14 @@ export async function updatePeers(
       seenAddrs.add(addr);
       const geo = await geolocateIfAllowed(entry.address);
       const lastSeen = toNumberSafe(entry.time, now);
+      const discoveredSubversion =
+        toStringSafe(entry.subversion, "") ||
+        toStringSafe(extractTaggedValue(entry.services, "subver"), "");
 
       const peer: Peer = {
         id: stableDiscoveredPeerId(addr),
         addr,
-        subversion: "",
+        subversion: discoveredSubversion,
         services: withReachabilityTag(entry.services, reachable),
         country: toStringSafe(geo.country, "") || undefined,
         city: toStringSafe(geo.city, "") || undefined,
