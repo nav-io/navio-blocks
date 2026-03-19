@@ -1,7 +1,7 @@
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api';
 import { useApi } from '../hooks/useApi';
-import { satsToCoin, truncateHash, formatNumber, isRealToken, splitTokenId } from '../utils';
+import { satsToCoin, truncateHash, formatNumber, splitTokenId, shouldShowToken } from '../utils';
 import GlowCard from '../components/GlowCard';
 import OutputTypeBadge from '../components/OutputTypeBadge';
 import PrivacyBadge from '../components/PrivacyBadge';
@@ -37,7 +37,7 @@ export default function OutputDetail() {
   }
 
   const isSpent = Boolean(output.spent);
-  const hasToken = isRealToken(output.token_id);
+  const hasToken = shouldShowToken(output.token_id, output.predicate, output.output_type);
   const tokenParts = splitTokenId(output.token_id);
   const tokenBase = tokenParts?.base ?? '';
   const tokenLinkBase = tokenBase || (output.token_id ? output.token_id.replace(/#.*$/, '') : '');

@@ -39,8 +39,35 @@ function toInput(row: Record<string, unknown>): Input {
 
 const NATIVE_TOKEN_ID = '0000000000000000000000000000000000000000000000000000000000000000';
 
+function normalizePredicateLabel(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const normalized = raw.trim().toUpperCase();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function outputTypeFromPredicate(predicate: string | undefined): string | undefined {
+  switch (predicate) {
+    case 'CREATE_TOKEN':
+      return 'token_create';
+    case 'MINT':
+    case 'MINT_TOKEN':
+      return 'token_mint';
+    case 'NFT_MINT':
+    case 'MINT_NFT':
+      return 'nft_mint';
+    case 'PAY_FEE':
+    case 'DATA':
+      return 'fee';
+    default:
+      return undefined;
+  }
+}
+
 // Remap legacy output_type values that no longer exist in the enum
-function normalizeOutputType(raw: unknown, _row?: Record<string, unknown>): string {
+function normalizeOutputType(raw: unknown, row?: Record<string, unknown>): string {
+  const predicateType = outputTypeFromPredicate(normalizePredicateLabel(row?.predicate));
+  if (predicateType) return predicateType;
+
   const t = typeof raw === 'string' ? raw : 'unknown';
   if (t === 'blsct' || t === 'native' || t === 'unstake' || t === 'unknown') return 'transfer';
   if (t === 'data') return 'fee';
@@ -60,6 +87,29 @@ function parsePredicateArgs(raw: unknown): Record<string, unknown> | undefined {
   }
 }
 
+function isNonTokenPredicate(predicate: string | undefined): boolean {
+  if (!predicate) return false;
+  const normalized = predicate.trim().toUpperCase();
+  return normalized === 'PAY_FEE' || normalized === 'DATA';
+}
+
+function normalizeSpkType(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  if (raw === 'nulldata') return 'unspendable';
+  return raw;
+}
+
+function sanitizeTokenIdForOutput(
+  outputType: string,
+  predicate: string | undefined,
+  tokenId: string | undefined
+): string | undefined {
+  // Fee outputs and non-token predicates are native NAV only.
+  if (outputType === 'fee') return undefined;
+  if (isNonTokenPredicate(predicate)) return undefined;
+  return tokenId;
+}
+
 function toOutput(row: Record<string, unknown>): Output {
   const spendingTxid = typeof row.spending_txid === 'string' ? row.spending_txid : null;
   const spendingVin =
@@ -69,31 +119,39 @@ function toOutput(row: Record<string, unknown>): Output {
         ? null
         : Number(row.spending_vin);
 
+  const normalizedType = normalizeOutputType(row.output_type, row);
+  const rawTokenId = typeof row.token_id === 'string' ? row.token_id : undefined;
+  const predicate = typeof row.predicate === 'string' ? row.predicate : undefined;
+
   return {
     ...row,
     is_blsct: Boolean(row.is_blsct),
     spent: row.spent == null ? Boolean(spendingTxid) : Boolean(row.spent),
     spending_txid: spendingTxid,
     spending_vin: Number.isFinite(spendingVin) ? spendingVin : null,
-    output_type: normalizeOutputType(row.output_type, row),
-    spk_type: typeof row.spk_type === 'string' ? row.spk_type : undefined,
+    output_type: normalizedType,
+    spk_type: normalizeSpkType(row.spk_type),
     spk_hex: typeof row.spk_hex === 'string' ? row.spk_hex : undefined,
-    token_id: typeof row.token_id === 'string' ? row.token_id : undefined,
-    predicate: typeof row.predicate === 'string' ? row.predicate : undefined,
+    token_id: sanitizeTokenIdForOutput(normalizedType, predicate, rawTokenId),
+    predicate,
     predicate_hex: typeof row.predicate_hex === 'string' ? row.predicate_hex : undefined,
     predicate_args: parsePredicateArgs(row.predicate_args_json),
   } as unknown as Output;
 }
 
 function toLatestOutput(row: Record<string, unknown>): LatestOutput {
+  const normalizedType = normalizeOutputType(row.output_type, row);
+  const rawTokenId = typeof row.token_id === 'string' ? row.token_id : undefined;
+  const predicate = typeof row.predicate === 'string' ? row.predicate : undefined;
+
   return {
     ...row,
     is_blsct: Boolean(row.is_blsct),
-    output_type: normalizeOutputType(row.output_type, row),
-    spk_type: typeof row.spk_type === 'string' ? row.spk_type : undefined,
+    output_type: normalizedType,
+    spk_type: normalizeSpkType(row.spk_type),
     spk_hex: typeof row.spk_hex === 'string' ? row.spk_hex : undefined,
-    token_id: typeof row.token_id === 'string' ? row.token_id : undefined,
-    predicate: typeof row.predicate === 'string' ? row.predicate : undefined,
+    token_id: sanitizeTokenIdForOutput(normalizedType, predicate, rawTokenId),
+    predicate,
     predicate_hex: typeof row.predicate_hex === 'string' ? row.predicate_hex : undefined,
     predicate_args: parsePredicateArgs(row.predicate_args_json),
   } as unknown as LatestOutput;
@@ -108,6 +166,27 @@ function parseRawTx(row: Record<string, unknown>): Record<string, unknown> | nul
   } catch {
     return null;
   }
+}
+
+function extractValueSatFromRawTx(rawTx: Record<string, unknown> | null, n: number): number | undefined {
+  if (!rawTx || !Array.isArray(rawTx.vout)) return undefined;
+  const vouts = rawTx.vout as unknown[];
+
+  for (const item of vouts) {
+    if (!item || typeof item !== 'object') continue;
+    const vout = item as Record<string, unknown>;
+    const rawN = vout.n;
+    const voutN = typeof rawN === 'number' ? rawN : Number(rawN);
+    if (!Number.isFinite(voutN) || voutN !== n) continue;
+
+    const rawValue = vout.value;
+    if (typeof rawValue === 'number' && Number.isFinite(rawValue)) {
+      return Math.round(rawValue * 1e8);
+    }
+    return undefined;
+  }
+
+  return undefined;
 }
 
 function candidateString(value: unknown): string | null {
@@ -277,13 +356,19 @@ export default async function transactionsRoutes(app: FastifyInstance) {
     const period = request.query.period ?? '30d';
     return cached(`outputs:stats:${period}:${includeCoinbase}`, 30_000, () => {
 
-    const outputTypeCase = `CASE COALESCE(o.output_type, 'unknown')
-           WHEN 'blsct' THEN 'transfer'
-           WHEN 'native' THEN 'transfer'
-           WHEN 'unstake' THEN 'transfer'
-           WHEN 'unknown' THEN 'transfer'
-           WHEN 'data' THEN 'fee'
-           ELSE COALESCE(o.output_type, 'transfer')
+    const outputTypeCase = `CASE
+           WHEN UPPER(COALESCE(o.predicate, '')) = 'CREATE_TOKEN' THEN 'token_create'
+           WHEN UPPER(COALESCE(o.predicate, '')) IN ('MINT', 'MINT_TOKEN') THEN 'token_mint'
+           WHEN UPPER(COALESCE(o.predicate, '')) IN ('NFT_MINT', 'MINT_NFT') THEN 'nft_mint'
+           WHEN UPPER(COALESCE(o.predicate, '')) IN ('PAY_FEE', 'DATA') THEN 'fee'
+           ELSE CASE COALESCE(o.output_type, 'unknown')
+             WHEN 'blsct' THEN 'transfer'
+             WHEN 'native' THEN 'transfer'
+             WHEN 'unstake' THEN 'transfer'
+             WHEN 'unknown' THEN 'transfer'
+             WHEN 'data' THEN 'fee'
+             ELSE COALESCE(o.output_type, 'transfer')
+           END
          END`;
 
     const coinbaseFilter = includeCoinbase ? '' : `AND ${outputTypeCase} <> 'coinbase'`;
@@ -472,6 +557,7 @@ export default async function transactionsRoutes(app: FastifyInstance) {
          o.*,
          t.block_height,
          t.is_coinbase AS is_coinbase_tx,
+         t.raw_json AS tx_raw_json,
          b.timestamp
        FROM outputs o
        JOIN transactions t ON t.txid = o.txid
@@ -493,12 +579,19 @@ export default async function transactionsRoutes(app: FastifyInstance) {
       row.output_hash as string,
     );
 
+    const txRaw = parseRawTx({ raw_json: row.tx_raw_json });
+    const { tx_raw_json: _txRawJson, ...outputRow } = row;
+
+    const normalizedOutput = toOutput({
+      ...outputRow,
+      spending_txid: spendRow?.spending_txid ?? null,
+      spending_vin: spendRow?.spending_vin ?? null,
+    });
+    const valueSat = normalizedOutput.value_sat ?? extractValueSatFromRawTx(txRaw, normalizedOutput.n);
+
     const result: OutputDetail = {
-      ...toOutput({
-        ...row,
-        spending_txid: spendRow?.spending_txid ?? null,
-        spending_vin: spendRow?.spending_vin ?? null,
-      }),
+      ...normalizedOutput,
+      value_sat: valueSat,
       block_height: row.block_height as number,
       timestamp: row.timestamp as number,
       is_coinbase_tx: Boolean(row.is_coinbase_tx),
@@ -549,25 +642,42 @@ export default async function transactionsRoutes(app: FastifyInstance) {
     const showAll = request.query.all === '1';
     const spentFilter = request.query.spent;
 
+    const effectiveOutputTypeExpr = `CASE
+      WHEN UPPER(COALESCE(o.predicate, '')) = 'CREATE_TOKEN' THEN 'token_create'
+      WHEN UPPER(COALESCE(o.predicate, '')) IN ('MINT', 'MINT_TOKEN') THEN 'token_mint'
+      WHEN UPPER(COALESCE(o.predicate, '')) IN ('NFT_MINT', 'MINT_NFT') THEN 'nft_mint'
+      WHEN UPPER(COALESCE(o.predicate, '')) IN ('PAY_FEE', 'DATA') THEN 'fee'
+      ELSE CASE COALESCE(o.output_type, 'unknown')
+        WHEN 'blsct' THEN 'transfer'
+        WHEN 'native' THEN 'transfer'
+        WHEN 'unstake' THEN 'transfer'
+        WHEN 'unknown' THEN 'transfer'
+        WHEN 'data' THEN 'fee'
+        ELSE COALESCE(o.output_type, 'transfer')
+      END
+    END`;
+
     const conditions: string[] = [`COALESCE(o.output_hash, '') <> ''`];
     const params: unknown[] = [];
 
     if (!showAll) {
-      conditions.push(`o.output_type NOT IN ('coinbase', 'fee')`);
+      conditions.push(`${effectiveOutputTypeExpr} NOT IN ('coinbase', 'fee')`);
     }
 
     if (typeFilter) {
-      conditions.push(`o.output_type = ?`);
+      conditions.push(`${effectiveOutputTypeExpr} = ?`);
       params.push(typeFilter);
     }
 
     if (tokenIdFilter) {
       conditions.push(`o.token_id = ?`);
+      conditions.push(`COALESCE(UPPER(o.predicate), '') NOT IN ('PAY_FEE', 'DATA')`);
       params.push(tokenIdFilter);
     }
 
     if (isNft) {
       conditions.push(`o.token_id LIKE '%#%'`);
+      conditions.push(`COALESCE(UPPER(o.predicate), '') NOT IN ('PAY_FEE', 'DATA')`);
     }
 
     // Token mode filter: nav = native coin, tokens = fungible tokens, nfts = NFTs
@@ -575,8 +685,10 @@ export default async function transactionsRoutes(app: FastifyInstance) {
       conditions.push(`(o.token_id IS NULL OR o.token_id = '${NATIVE_TOKEN_ID}')`);
     } else if (tokenMode === 'tokens') {
       conditions.push(`o.token_id IS NOT NULL AND o.token_id <> '${NATIVE_TOKEN_ID}' AND o.token_id NOT LIKE '%#%'`);
+      conditions.push(`COALESCE(UPPER(o.predicate), '') NOT IN ('PAY_FEE', 'DATA')`);
     } else if (tokenMode === 'nfts') {
       conditions.push(`o.token_id LIKE '%#%'`);
+      conditions.push(`COALESCE(UPPER(o.predicate), '') NOT IN ('PAY_FEE', 'DATA')`);
     }
 
     // Spent filter using EXISTS subquery (no duplicate risk)
@@ -594,7 +706,7 @@ export default async function transactionsRoutes(app: FastifyInstance) {
          o.spending_key, o.ephemeral_key, o.blinding_key, o.view_tag,
          o.is_blsct, o.output_type, o.spk_type, o.spk_hex, o.token_id,
          o.predicate, o.predicate_hex, o.predicate_args_json,
-         t.block_height, b.timestamp
+         t.block_height, b.timestamp, t.raw_json AS tx_raw_json
        FROM outputs o
        JOIN transactions t ON t.txid = o.txid
        JOIN blocks b ON b.height = t.block_height
@@ -615,7 +727,16 @@ export default async function transactionsRoutes(app: FastifyInstance) {
     )?.count ?? 0;
 
     return {
-      data: rows.map(toLatestOutput),
+      data: rows.map((row) => {
+        const { tx_raw_json: txRawJson, ...outputRow } = row;
+        const out = toLatestOutput(outputRow);
+        const rawTx = parseRawTx({ raw_json: txRawJson });
+        const valueSat = out.value_sat ?? extractValueSatFromRawTx(rawTx, out.n);
+        return {
+          ...out,
+          value_sat: valueSat,
+        };
+      }),
       total,
       limit,
       offset,
@@ -729,12 +850,12 @@ export default async function transactionsRoutes(app: FastifyInstance) {
     };
 
     const resolveOutputTypeByHash = (outputHash: string): Input['output_type'] | undefined => {
-      const row = queryOne<{ output_type: string }>(
-        'SELECT output_type FROM outputs WHERE output_hash = ?',
+      const row = queryOne<{ output_type: string; predicate: string | null }>(
+        'SELECT output_type, predicate FROM outputs WHERE output_hash = ?',
         outputHash,
       );
       if (typeof row?.output_type !== 'string') return undefined;
-      return normalizeOutputType(row.output_type) as Input['output_type'];
+      return normalizeOutputType(row.output_type, row as unknown as Record<string, unknown>) as Input['output_type'];
     };
 
     const rawVins = Array.isArray(naviodTx?.vin)
@@ -759,9 +880,11 @@ export default async function transactionsRoutes(app: FastifyInstance) {
       inputs: normalizedInputs,
       outputs: outputRows.map((row) => {
         const out = toOutput(row);
+        const valueSat = out.value_sat ?? extractValueSatFromRawTx(naviodTx, out.n);
         const spend = out.output_hash ? spentByOutput.get(out.output_hash) : undefined;
         return {
           ...out,
+          value_sat: valueSat,
           spent: Boolean(spend),
           spending_txid: spend?.spending_txid ?? null,
           spending_vin: spend?.spending_vin ?? null,

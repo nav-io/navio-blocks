@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api';
 import { useApi } from '../hooks/useApi';
-import { satsToCoin, truncateHash, formatNumber, formatBytes, isRealToken, splitTokenId } from '../utils';
+import { satsToCoin, truncateHash, formatNumber, formatBytes, splitTokenId, shouldShowToken } from '../utils';
 import GlowCard from '../components/GlowCard';
 import PrivacyBadge from '../components/PrivacyBadge';
 import OutputTypeBadge from '../components/OutputTypeBadge';
@@ -66,6 +66,7 @@ function OutputRow({ output, index }: { output: Output; index: number }) {
   const tokenBase = tokenParts?.base;
   const tokenLinkBase = tokenBase || (output.token_id ? output.token_id.replace(/#.*$/, '') : undefined);
   const nftIndex = tokenParts?.nftIndex;
+  const hasToken = shouldShowToken(output.token_id, output.predicate, output.output_type);
   const predicateArgs =
     output.predicate_args && typeof output.predicate_args === 'object'
       ? (output.predicate_args as Record<string, unknown>)
@@ -98,7 +99,7 @@ function OutputRow({ output, index }: { output: Output; index: number }) {
               )}
               {output.output_type && <OutputTypeBadge type={output.output_type} />}
               {output.is_blsct && <PrivacyBadge isBlsct />}
-                {isRealToken(output.token_id) && (
+                {hasToken && (
                   <span className={`inline-block rounded px-2 py-0.5 text-xs font-mono font-medium border ${
                     output.token_id!.includes('#')
                       ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
@@ -120,7 +121,7 @@ function OutputRow({ output, index }: { output: Output; index: number }) {
               </div>
             )}
 
-            {isRealToken(output.token_id) && (
+            {hasToken && (
               <div className="flex items-center gap-1.5">
                 <span className="text-[10px] uppercase tracking-wider text-white/30 shrink-0">Token</span>
                 {tokenLinkBase ? (

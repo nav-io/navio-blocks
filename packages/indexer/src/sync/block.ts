@@ -158,6 +158,9 @@ function extractSpkFields(rpcVout: Record<string, unknown>): {
   if (spk_type === "nonstandard" && spk_hex === "51") {
     spk_type = "op_true";
   }
+  if (spk_type === "nulldata") {
+    spk_type = "unspendable";
+  }
   return {
     spk_type,
     spk_hex,
@@ -231,6 +234,9 @@ function deriveTokenIdFromPredicate(
   predicate: DecodedPredicate | undefined
 ): string | undefined {
   if (!predicate) return tokenId;
+  if (predicate.op !== 0 && predicate.op !== 1 && predicate.op !== 2) {
+    return tokenId;
+  }
   if (tokenId && !isNativeTokenId(tokenId)) return tokenId;
 
   const base = tokenIdFromPublicKeyHex(predicate.public_key_hex);
@@ -239,6 +245,17 @@ function deriveTokenIdFromPredicate(
     return `${base}#${predicate.nft_id}`;
   }
   return base;
+}
+
+function sanitizeTokenIdForOutput(
+  tokenId: string | undefined,
+  predicate: DecodedPredicate | undefined,
+  outputType: OutputType,
+): string | undefined {
+  if (!tokenId) return tokenId;
+  if (outputType === "fee") return undefined;
+  if (predicate?.op === 3 || predicate?.op === 4) return undefined;
+  return tokenId;
 }
 
 function predicateOpToLabel(op: number | undefined): string | undefined {
@@ -757,27 +774,12 @@ function classifyOutputType(
 ): OutputType {
   const { spk_type, spk_asm } = extractSpkFields(rpcVout);
   const val = satoshis(rpcVout.value);
+  const op = predicate?.op;
 
   // 1. Coinbase tx outputs
   if (isCoinbaseTx) return "coinbase";
 
-  // 2. Fee output: nulldata/fee type with value > 0
-  if ((spk_type === "nulldata" || spk_type === "fee") && val > 0) return "fee";
-
-  // 3. Zero-value nulldata/fee → fee with 0 value (still a fee-type script, skip)
-  //    These are OP_RETURN data carriers; classify as fee (unspendable)
-  if (spk_type === "nulldata" || spk_type === "fee") return "fee";
-
-  // 4. Staking commitment
-  if (spk_asm && spk_asm.startsWith("OP_STAKED_COMMITMENT")) return "stake";
-
-  // 5. HTLC (atomic swap): OP_IF ... OP_SHA256 ... OP_CHECKLOCKTIMEVERIFY ... OP_ENDIF
-  if (spk_asm && spk_asm.includes("OP_SHA256") && spk_asm.includes("OP_CHECKLOCKTIMEVERIFY")) {
-    return "htlc";
-  }
-
-  // 6. Predicate-driven token operations.
-  const op = predicate?.op;
+  // 2. Predicate-driven token operations and explicit fee/data predicates.
   if (op === 0) {
     const predicateType = predicate?.token_type;
     if (predicateType === "nft") return "nft_create";
@@ -786,6 +788,22 @@ function classifyOutputType(
   }
   if (op === 1) return "token_mint";
   if (op === 2) return "nft_mint";
+  if (op === 3 || op === 4) return "fee";
+
+  // 3. Fee output: unspendable OP_RETURN/fee script with value > 0.
+  if ((spk_type === "unspendable" || spk_type === "nulldata" || spk_type === "fee") && val > 0) return "fee";
+
+  // 4. Zero-value unspendable/fee script → fee (still unspendable)
+  //    These are OP_RETURN data carriers; classify as fee (unspendable)
+  if (spk_type === "unspendable" || spk_type === "nulldata" || spk_type === "fee") return "fee";
+
+  // 5. Staking commitment
+  if (spk_asm && spk_asm.startsWith("OP_STAKED_COMMITMENT")) return "stake";
+
+  // 6. HTLC (atomic swap): OP_IF ... OP_SHA256 ... OP_CHECKLOCKTIMEVERIFY ... OP_ENDIF
+  if (spk_asm && spk_asm.includes("OP_SHA256") && spk_asm.includes("OP_CHECKLOCKTIMEVERIFY")) {
+    return "htlc";
+  }
 
   // 7. Token output without token-operation predicate — treat as transfer.
   if (tokenId && !isNativeTokenId(tokenId)) {
@@ -877,7 +895,19 @@ export function computeBlockFees(
       if (!spk) continue;
       const spkType = spk.type as string | undefined;
       const val = satoshis(vout.value);
-      if (val > 0 && (spkType === 'nulldata' || spkType === 'fee')) {
+      if (val <= 0) continue;
+
+      const predicate = extractDecodedPredicateFromVout(vout);
+      if (predicate?.op === 3) {
+        feesBurned += val;
+        continue;
+      }
+      if (predicate?.op === 0 || predicate?.op === 1 || predicate?.op === 2 || predicate?.op === 4) {
+        continue;
+      }
+
+      // Legacy fallback when predicate is unavailable: infer from OP_RETURN/fee script type.
+      if (spkType === 'nulldata' || spkType === 'fee') {
         feesBurned += val;
       }
     }
@@ -962,19 +992,22 @@ export function parseBlock(rpcBlock: Record<string, unknown>, network: NetworkTy
           : undefined);
       const predicateArgs = predicateArgsFromDecoded(decodedPredicate);
 
-      if (hasTokenFields(rpcVout)) txHasToken = true;
-      if (tokenId && !isNativeTokenId(tokenId)) txHasToken = true;
+      const spkFields = extractSpkFields(rpcVout);
+      const outputType = classifyOutputType(rpcVout, isCoinbaseTx, blsct, tokenId, decodedPredicate);
+      const normalizedTokenId = sanitizeTokenIdForOutput(tokenId, decodedPredicate, outputType);
+      const txid = rpcTx.txid as string;
+
+      if (hasTokenFields(rpcVout) && normalizedTokenId && !isNativeTokenId(normalizedTokenId)) {
+        txHasToken = true;
+      }
+      if (normalizedTokenId && !isNativeTokenId(normalizedTokenId)) txHasToken = true;
       if (decodedPredicate && (decodedPredicate.op === 0 || decodedPredicate.op === 1 || decodedPredicate.op === 2)) {
         txHasToken = true;
       }
 
-      const spkFields = extractSpkFields(rpcVout);
-      const outputType = classifyOutputType(rpcVout, isCoinbaseTx, blsct, tokenId, decodedPredicate);
-      const txid = rpcTx.txid as string;
-
       const tokenCollection = extractTokenCollectionRecord(
         outputType,
-        tokenId,
+        normalizedTokenId,
         decodedPredicate,
         txid,
         outputHash,
@@ -987,7 +1020,7 @@ export function parseBlock(rpcBlock: Record<string, unknown>, network: NetworkTy
 
       const nftItem = extractNftItemRecord(
         outputType,
-        tokenId,
+        normalizedTokenId,
         decodedPredicate,
         txid,
         outputHash,
@@ -1004,11 +1037,12 @@ export function parseBlock(rpcBlock: Record<string, unknown>, network: NetworkTy
           txid,
           n: voutIndex,
           output_hash: outputHash,
+          value_sat: satoshis(rpcVout.value),
           is_blsct: true,
           output_type: outputType,
           spk_type: spkFields.spk_type,
           spk_hex: spkFields.spk_hex,
-          token_id: tokenId,
+          token_id: normalizedTokenId,
           predicate: predicateLabel,
           predicate_hex: predicateHex,
           predicate_args: predicateArgs,
@@ -1028,7 +1062,7 @@ export function parseBlock(rpcBlock: Record<string, unknown>, network: NetworkTy
           output_type: outputType,
           spk_type: spkFields.spk_type,
           spk_hex: spkFields.spk_hex,
-          token_id: tokenId,
+          token_id: normalizedTokenId,
           predicate: predicateLabel,
           predicate_hex: predicateHex,
           predicate_args: predicateArgs,

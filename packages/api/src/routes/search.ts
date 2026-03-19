@@ -54,6 +54,7 @@ export default async function searchRoutes(app: FastifyInstance) {
         `SELECT token_id
          FROM outputs
          WHERE LOWER(token_id) = LOWER(?)
+           AND COALESCE(UPPER(predicate), '') NOT IN ('PAY_FEE', 'DATA')
          LIMIT 1`,
         `${tokenId.toLowerCase()}#${nftIndex}`,
       );
@@ -116,6 +117,7 @@ export default async function searchRoutes(app: FastifyInstance) {
          ) = LOWER(?)
            AND token_id IS NOT NULL
            AND token_id <> ''
+           AND COALESCE(UPPER(predicate), '') NOT IN ('PAY_FEE', 'DATA')
          LIMIT 1`,
         qLower,
       );

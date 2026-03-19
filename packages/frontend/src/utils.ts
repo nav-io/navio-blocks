@@ -84,6 +84,18 @@ export function splitTokenId(tokenId: string | undefined | null): { base: string
   };
 }
 
+export function shouldShowToken(
+  tokenId: string | undefined | null,
+  predicate: string | undefined | null,
+  outputType: string | undefined | null,
+): boolean {
+  if (!isRealToken(tokenId)) return false;
+  if (outputType === 'fee') return false;
+  const normalizedPredicate = typeof predicate === 'string' ? predicate.trim().toUpperCase() : '';
+  if (normalizedPredicate === 'PAY_FEE' || normalizedPredicate === 'DATA') return false;
+  return true;
+}
+
 export function satsToCoinShort(sats: number): string {
   const nav = sats / 1e8;
   if (nav >= 1e6) return (nav / 1e6).toFixed(2) + 'M';

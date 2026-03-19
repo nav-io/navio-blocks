@@ -90,6 +90,65 @@ function normalizeOutputType(raw: unknown): string {
   return t;
 }
 
+function normalizePredicateLabel(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const normalized = raw.trim().toUpperCase();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function outputTypeFromPredicate(predicate: string | undefined): string | undefined {
+  switch (predicate) {
+    case "CREATE_TOKEN":
+      return "token_create";
+    case "MINT":
+    case "MINT_TOKEN":
+      return "token_mint";
+    case "NFT_MINT":
+    case "MINT_NFT":
+      return "nft_mint";
+    case "PAY_FEE":
+    case "DATA":
+      return "fee";
+    default:
+      return undefined;
+  }
+}
+
+function normalizeOutputTypeWithPredicate(outputType: unknown, predicate: unknown): string {
+  const fromPredicate = outputTypeFromPredicate(normalizePredicateLabel(predicate));
+  if (fromPredicate) return fromPredicate;
+  return normalizeOutputType(outputType);
+}
+
+function normalizeSpkType(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  if (raw === "nulldata") return "unspendable";
+  return raw;
+}
+
+function metadataFromUnknown(raw: unknown): TokenMetadataEntry[] {
+  if (raw == null) return [];
+  if (typeof raw === "string") return parseMetadata(raw);
+  if (typeof raw === "object") {
+    try {
+      return parseMetadata(JSON.stringify(raw));
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function toNullableNumber(raw: unknown): number | null | undefined {
+  if (raw == null) return null;
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw : undefined;
+  if (typeof raw === "string" && raw.trim() !== "") {
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
 function parsePredicateArgs(raw: unknown): Record<string, unknown> | undefined {
   if (typeof raw !== "string" || raw.trim() === "") return undefined;
   try {
@@ -103,6 +162,12 @@ function parsePredicateArgs(raw: unknown): Record<string, unknown> | undefined {
   }
 }
 
+function isNonTokenPredicate(predicate: string | undefined): boolean {
+  if (!predicate) return false;
+  const normalized = predicate.trim().toUpperCase();
+  return normalized === "PAY_FEE" || normalized === "DATA";
+}
+
 function toTokenActivity(row: Record<string, unknown>): TokenActivity {
   const spendingTxid = typeof row.spending_txid === "string" ? row.spending_txid : null;
   const spendingVinRaw = row.spending_vin;
@@ -112,6 +177,15 @@ function toTokenActivity(row: Record<string, unknown>): TokenActivity {
       : spendingVinRaw == null
         ? null
         : Number(spendingVinRaw);
+
+  const predicate = typeof row.predicate === "string" ? row.predicate : undefined;
+  const normalizedType = normalizeOutputTypeWithPredicate(row.output_type, predicate);
+  const rawTokenId = typeof row.token_id === "string" ? row.token_id : undefined;
+
+  const tokenId =
+    normalizedType === "fee" || isNonTokenPredicate(predicate)
+      ? undefined
+      : rawTokenId;
 
   return {
     output_hash: String(row.output_hash ?? ""),
@@ -129,11 +203,11 @@ function toTokenActivity(row: Record<string, unknown>): TokenActivity {
     blinding_key: typeof row.blinding_key === "string" ? row.blinding_key : undefined,
     view_tag: typeof row.view_tag === "string" ? row.view_tag : undefined,
     is_blsct: Boolean(row.is_blsct),
-    output_type: normalizeOutputType(row.output_type) as TokenActivity["output_type"],
-    spk_type: typeof row.spk_type === "string" ? row.spk_type : undefined,
+    output_type: normalizedType as TokenActivity["output_type"],
+    spk_type: normalizeSpkType(row.spk_type),
     spk_hex: typeof row.spk_hex === "string" ? row.spk_hex : undefined,
-    token_id: typeof row.token_id === "string" ? row.token_id : undefined,
-    predicate: typeof row.predicate === "string" ? row.predicate : undefined,
+    token_id: tokenId,
+    predicate,
     predicate_hex: typeof row.predicate_hex === "string" ? row.predicate_hex : undefined,
     predicate_args: parsePredicateArgs(row.predicate_args_json),
     block_height: Number(row.block_height ?? 0),
@@ -256,6 +330,7 @@ export default async function tokenRoutes(app: FastifyInstance) {
          JOIN blocks b ON b.height = t.block_height
          WHERE o.token_id IS NOT NULL
            AND o.token_id <> ''
+           AND COALESCE(UPPER(o.predicate), '') NOT IN ('PAY_FEE', 'DATA')
            AND ${baseExpr} <> LOWER(?)
          GROUP BY 1
        )
@@ -299,6 +374,7 @@ export default async function tokenRoutes(app: FastifyInstance) {
          FROM outputs o
          WHERE o.token_id IS NOT NULL
            AND o.token_id <> ''
+           AND COALESCE(UPPER(o.predicate), '') NOT IN ('PAY_FEE', 'DATA')
            AND ${baseExpr} <> LOWER(?)
          GROUP BY 1
        )
@@ -402,9 +478,26 @@ export default async function tokenRoutes(app: FastifyInstance) {
        JOIN blocks b ON b.height = t.block_height
        WHERE ${baseTokenExpr("o")} = LOWER(?)
          AND o.token_id IS NOT NULL
+         AND COALESCE(UPPER(o.predicate), '') NOT IN ('PAY_FEE', 'DATA')
          AND o.token_id <> ''`,
       tokenId,
     );
+
+    const createPredicateRow = queryOne<{ predicate_args_json: string | null }>(
+      `SELECT o.predicate_args_json
+       FROM outputs o
+       JOIN transactions t ON t.txid = o.txid
+       WHERE ${baseTokenExpr("o")} = LOWER(?)
+         AND UPPER(COALESCE(o.predicate, '')) = 'CREATE_TOKEN'
+       ORDER BY t.block_height ASC, t.tx_index ASC, o.n ASC
+       LIMIT 1`,
+      tokenId,
+    );
+    const createPredicateArgs = parsePredicateArgs(createPredicateRow?.predicate_args_json);
+    const fallbackPublicKey = candidateString(createPredicateArgs?.public_key);
+    const fallbackMetadata = metadataFromUnknown(createPredicateArgs?.metadata);
+    const fallbackMaxSupply = toNullableNumber(createPredicateArgs?.max_supply);
+    const fallbackType = normalizeKind(createPredicateArgs?.token_type);
 
     const mintedNfts = HAS_NFT_ITEMS
       ? queryAll<{ nft_index: string; metadata_json: string | null }>(
@@ -432,6 +525,7 @@ export default async function tokenRoutes(app: FastifyInstance) {
        JOIN blocks b ON b.height = t.block_height
        LEFT JOIN inputs i ON i.prev_out = o.output_hash AND i.prev_out <> ''
        WHERE ${baseTokenExpr("o")} = LOWER(?)
+         AND COALESCE(UPPER(o.predicate), '') NOT IN ('PAY_FEE', 'DATA')
        ORDER BY t.block_height DESC, t.tx_index DESC, o.n ASC
        LIMIT ? OFFSET ?`,
       tokenId,
@@ -442,7 +536,8 @@ export default async function tokenRoutes(app: FastifyInstance) {
     const totalActivity = queryOne<{ count: number }>(
       `SELECT COUNT(*) AS count
        FROM outputs o
-       WHERE ${baseTokenExpr("o")} = LOWER(?)`,
+       WHERE ${baseTokenExpr("o")} = LOWER(?)
+         AND COALESCE(UPPER(o.predicate), '') NOT IN ('PAY_FEE', 'DATA')`,
       tokenId,
     )?.count ?? 0;
 
@@ -452,21 +547,37 @@ export default async function tokenRoutes(app: FastifyInstance) {
     }
 
     const inferredType: TokenKind = (stats?.has_nft_activity ?? 0) === 1 ? "nft" : "token";
-    const collectionType = normalizeKind(collectionRow?.token_type) === "unknown"
-      ? inferredType
-      : normalizeKind(collectionRow?.token_type);
+    const collectionRowType = normalizeKind(collectionRow?.token_type);
+    const collectionType =
+      collectionRowType !== "unknown"
+        ? collectionRowType
+        : fallbackType !== "unknown"
+          ? fallbackType
+          : inferredType;
+
+    const metadataFromCollection = parseMetadata(collectionRow?.metadata_json ?? null);
+    const metadata =
+      metadataFromCollection.length > 0
+        ? metadataFromCollection
+        : fallbackMetadata;
+
+    const maxSupplyFromCollection =
+      typeof collectionRow?.max_supply === "number"
+        ? collectionRow.max_supply
+        : collectionRow?.max_supply == null
+          ? null
+          : Number(collectionRow.max_supply);
+    const maxSupply =
+      maxSupplyFromCollection != null
+        ? maxSupplyFromCollection
+        : fallbackMaxSupply ?? null;
 
     const detail: TokenDetail = {
       token_id: tokenId,
       type: collectionType,
-      public_key: candidateString(collectionRow?.public_key ?? null) ?? undefined,
-      metadata: parseMetadata(collectionRow?.metadata_json ?? null),
-      max_supply:
-        typeof collectionRow?.max_supply === "number"
-          ? collectionRow.max_supply
-          : collectionRow?.max_supply == null
-            ? null
-            : Number(collectionRow.max_supply),
+      public_key: candidateString(collectionRow?.public_key ?? null) ?? fallbackPublicKey ?? undefined,
+      metadata,
+      max_supply: maxSupply,
       current_supply: null,
       mint_event_count: Number(stats?.mint_event_count ?? 0),
       minted_nft_count: mintedNfts.length > 0
@@ -574,7 +685,8 @@ export default async function tokenRoutes(app: FastifyInstance) {
        FROM outputs o
        JOIN transactions t ON t.txid = o.txid
        JOIN blocks b ON b.height = t.block_height
-       WHERE LOWER(o.token_id) = LOWER(?)`,
+       WHERE LOWER(o.token_id) = LOWER(?)
+         AND COALESCE(UPPER(o.predicate), '') NOT IN ('PAY_FEE', 'DATA')`,
       nftId,
     );
 
@@ -592,6 +704,7 @@ export default async function tokenRoutes(app: FastifyInstance) {
        FROM outputs o
        JOIN transactions t ON t.txid = o.txid
        WHERE LOWER(o.token_id) = LOWER(?)
+         AND COALESCE(UPPER(o.predicate), '') NOT IN ('PAY_FEE', 'DATA')
          AND NOT EXISTS (
            SELECT 1 FROM inputs i
            WHERE i.prev_out = o.output_hash
@@ -615,6 +728,7 @@ export default async function tokenRoutes(app: FastifyInstance) {
        JOIN blocks b ON b.height = t.block_height
        LEFT JOIN inputs i ON i.prev_out = o.output_hash AND i.prev_out <> ''
        WHERE LOWER(o.token_id) = LOWER(?)
+         AND COALESCE(UPPER(o.predicate), '') NOT IN ('PAY_FEE', 'DATA')
        ORDER BY t.block_height DESC, t.tx_index DESC, o.n ASC
        LIMIT ? OFFSET ?`,
       nftId,
@@ -624,8 +738,9 @@ export default async function tokenRoutes(app: FastifyInstance) {
 
     const totalActivity = queryOne<{ count: number }>(
       `SELECT COUNT(*) AS count
-       FROM outputs
-       WHERE LOWER(token_id) = LOWER(?)`,
+       FROM outputs o
+       WHERE LOWER(o.token_id) = LOWER(?)
+         AND COALESCE(UPPER(o.predicate), '') NOT IN ('PAY_FEE', 'DATA')`,
       nftId,
     )?.count ?? 0;
 

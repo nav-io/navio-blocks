@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { useApi } from '../hooks/useApi';
-import { truncateHash, formatNumber, timeAgo, satsToCoin, isRealToken, splitTokenId } from '../utils';
+import { truncateHash, formatNumber, timeAgo, satsToCoin, splitTokenId, shouldShowToken } from '../utils';
 import { Pagination } from '../components/Pagination';
 import GlowCard from '../components/GlowCard';
 import OutputTypeBadge, { TYPE_BAR_COLORS } from '../components/OutputTypeBadge';
@@ -277,7 +277,7 @@ export default function OutputList() {
                       </div>
                     </td>
                     <td className="py-3 pr-4">
-                      {isRealToken(o.token_id) ? (() => {
+                      {shouldShowToken(o.token_id, o.predicate, o.output_type) ? (() => {
                         const tokenParts = splitTokenId(o.token_id);
                         const tokenBase = tokenParts?.base;
                         const nftIndex = tokenParts?.nftIndex;
