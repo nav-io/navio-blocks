@@ -117,9 +117,9 @@ export class Poller {
       for (let h = startHeight; h <= chainHeight; h++) {
         const hash = await this.rpc.getBlockHash(h);
         const rpcBlock = await this.fetchBlockWithFallback(hash, h);
-        const { block, transactions, outputs, inputs, fees } = parseBlock(rpcBlock, this.network);
+        const { block, transactions, outputs, inputs, token_collections, nft_items, fees } = parseBlock(rpcBlock, this.network);
 
-        this.queries.insertBlockBatch(block, transactions, outputs, inputs);
+        this.queries.insertBlockBatch(block, transactions, outputs, inputs, token_collections, nft_items);
 
         // Compute and insert supply data
         const prevSupply = h > 0

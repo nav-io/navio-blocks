@@ -42,6 +42,23 @@ export const api = {
       `/outputs?${params.toString()}`
     );
   },
+  getTokens: (limit = 20, offset = 0, type: 'all' | 'token' | 'nft' = 'all') => {
+    const params = new URLSearchParams();
+    params.set('limit', String(limit));
+    params.set('offset', String(offset));
+    params.set('type', type);
+    return fetchJSON<import('@navio-blocks/shared').PaginatedResponse<import('@navio-blocks/shared').TokenSummary>>(
+      `/tokens?${params.toString()}`
+    );
+  },
+  getToken: (tokenId: string, limit = 20, offset = 0) =>
+    fetchJSON<import('@navio-blocks/shared').TokenDetail>(
+      `/tokens/${encodeURIComponent(tokenId)}?limit=${limit}&offset=${offset}`
+    ),
+  getNft: (tokenId: string, index: string, limit = 20, offset = 0) =>
+    fetchJSON<import('@navio-blocks/shared').NftDetail>(
+      `/nfts/${encodeURIComponent(tokenId)}/${encodeURIComponent(index)}?limit=${limit}&offset=${offset}`
+    ),
   getOutputTypeStats: (includeCoinbase = false, period = '30d') => {
     const params = new URLSearchParams();
     if (includeCoinbase) params.set('include_coinbase', '1');

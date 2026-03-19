@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api';
 import { useApi } from '../hooks/useApi';
-import { satsToCoin, truncateHash, formatNumber, formatBytes, isRealToken } from '../utils';
+import { satsToCoin, truncateHash, formatNumber, formatBytes, isRealToken, splitTokenId } from '../utils';
 import GlowCard from '../components/GlowCard';
 import PrivacyBadge from '../components/PrivacyBadge';
 import OutputTypeBadge from '../components/OutputTypeBadge';
@@ -62,6 +62,9 @@ function OutputRow({ output, index }: { output: Output; index: number }) {
   const isSpent = Boolean(output.spent);
   const isFeeType = output.output_type === 'fee';
   const spkDimmed = output.spk_hex === '51';
+  const tokenParts = splitTokenId(output.token_id);
+  const tokenBase = tokenParts?.base;
+  const nftIndex = tokenParts?.nftIndex;
 
   return (
     <div className="py-3 border-b border-white/5 last:border-b-0">
@@ -109,7 +112,25 @@ function OutputRow({ output, index }: { output: Output; index: number }) {
             {isRealToken(output.token_id) && (
               <div className="flex items-center gap-1.5">
                 <span className="text-[10px] uppercase tracking-wider text-white/30 shrink-0">Token</span>
-                <span className="font-mono text-xs text-white/60">{truncateHash(output.token_id!, 10)}</span>
+                {tokenBase ? (
+                  nftIndex ? (
+                    <Link
+                      to={`/nft/${tokenBase}/${nftIndex}`}
+                      className="font-mono text-xs text-neon-blue hover:text-neon-purple transition-colors"
+                    >
+                      {truncateHash(output.token_id!, 10)}
+                    </Link>
+                  ) : (
+                    <Link
+                      to={`/token/${tokenBase}`}
+                      className="font-mono text-xs text-neon-blue hover:text-neon-purple transition-colors"
+                    >
+                      {truncateHash(output.token_id!, 10)}
+                    </Link>
+                  )
+                ) : (
+                  <span className="font-mono text-xs text-white/60">{truncateHash(output.token_id!, 10)}</span>
+                )}
               </div>
             )}
 

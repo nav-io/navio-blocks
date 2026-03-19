@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { api } from '../api';
 import { useApi } from '../hooks/useApi';
 import { formatNumber, satsToCoin, satsToCoinShort } from '../utils';
@@ -8,6 +8,79 @@ import PriceChart from '../components/PriceChart';
 import Loader from '../components/Loader';
 
 const PERIODS = ['24h', '7d', '30d', '1y', 'all'] as const;
+type SupplyPeriod = (typeof PERIODS)[number];
+
+const PERIOD_TO_SECONDS: Record<SupplyPeriod, number> = {
+  '24h': 24 * 60 * 60,
+  '7d': 7 * 24 * 60 * 60,
+  '30d': 30 * 24 * 60 * 60,
+  '1y': 365 * 24 * 60 * 60,
+  all: 365 * 24 * 60 * 60,
+};
+
+interface SupplyProjection {
+  points: { timestamp: number; value: number }[];
+  emissionPerDaySat: number;
+  burnPerDaySat: number;
+  netPerDaySat: number;
+}
+
+function formatSignedNavPerDay(satPerDay: number): string {
+  const sign = satPerDay > 0 ? '+' : satPerDay < 0 ? '-' : '';
+  return `${sign}${satsToCoin(Math.abs(satPerDay))} NAV/day`;
+}
+
+function buildSupplyProjection(
+  points: { timestamp: number; height: number; total_supply: number; total_burned: number }[],
+  currentBlockRewardSat: number,
+  avgBlockTimeSeconds: number | undefined,
+  maxSupplySat: number,
+  period: SupplyPeriod,
+): SupplyProjection | null {
+  if (!points || points.length < 2) return null;
+
+  const sorted = [...points].sort((a, b) => a.timestamp - b.timestamp);
+  const latest = sorted[sorted.length - 1];
+  const lookbackStartTs = latest.timestamp - 30 * 24 * 60 * 60;
+  const recent = sorted.filter((p) => p.timestamp >= lookbackStartTs);
+  const baseline = recent.length >= 2 ? recent[0] : sorted[Math.max(0, sorted.length - 60)];
+  const durationSec = latest.timestamp - baseline.timestamp;
+  const heightDelta = latest.height - baseline.height;
+  if (durationSec <= 0 || heightDelta <= 0) return null;
+
+  const observedBlockTime = durationSec / heightDelta;
+  const blockTime =
+    avgBlockTimeSeconds && Number.isFinite(avgBlockTimeSeconds) && avgBlockTimeSeconds > 0
+      ? avgBlockTimeSeconds
+      : observedBlockTime;
+
+  const blocksPerDay = 86_400 / Math.max(1, blockTime);
+  const emissionPerDaySat = currentBlockRewardSat * blocksPerDay;
+  const burnPerDaySat =
+    ((latest.total_burned - baseline.total_burned) / durationSec) * 86_400;
+  const netPerDaySat = emissionPerDaySat - burnPerDaySat;
+
+  const horizonSec = PERIOD_TO_SECONDS[period] ?? PERIOD_TO_SECONDS.all;
+  const steps = 48;
+  const projectionPoints: { timestamp: number; value: number }[] = [];
+
+  for (let i = 1; i <= steps; i++) {
+    const elapsedSec = (horizonSec * i) / steps;
+    const projectedSat = latest.total_supply + (netPerDaySat * elapsedSec) / 86_400;
+    const clampedSat = Math.max(0, Math.min(maxSupplySat, projectedSat));
+    projectionPoints.push({
+      timestamp: latest.timestamp + Math.round(elapsedSec),
+      value: clampedSat / 1e8,
+    });
+  }
+
+  return {
+    points: projectionPoints,
+    emissionPerDaySat,
+    burnPerDaySat,
+    netPerDaySat,
+  };
+}
 
 function PeriodSelector({
   selected,
@@ -51,6 +124,27 @@ export default function Supply() {
     [burnedPeriod],
   );
   const { data: burnedData } = useApi(() => api.getSupplyBurned(), []);
+  const { data: stats } = useApi(() => api.getStats(), []);
+
+  const supplyChartSeries = useMemo(
+    () =>
+      (chartData ?? []).map((p) => ({
+        timestamp: p.timestamp,
+        value: p.total_supply / 1e8,
+      })),
+    [chartData],
+  );
+
+  const supplyProjection = useMemo(() => {
+    if (!supply) return null;
+    return buildSupplyProjection(
+      chartData ?? [],
+      supply.block_reward,
+      stats?.avg_block_time,
+      supply.max_supply,
+      supplyPeriod as SupplyPeriod,
+    );
+  }, [chartData, supply, stats?.avg_block_time, supplyPeriod]);
 
   if (supplyLoading) return <Loader text="Loading supply data..." />;
   if (supplyError) {
@@ -97,13 +191,30 @@ export default function Supply() {
           {chartLoading ? (
             <Loader text="Loading chart..." />
           ) : chartData && chartData.length > 0 ? (
-            <PriceChart
-              data={chartData.map((p) => ({
-                timestamp: p.timestamp,
-                value: p.total_supply / 1e8,
-              }))}
-              color="#4FB3FF"
-            />
+            <>
+              <PriceChart
+                data={supplyChartSeries}
+                color="#4FB3FF"
+                projectionData={supplyProjection?.points}
+                projectionColor="rgba(88, 246, 187, 0.92)"
+              />
+              {supplyProjection && (
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-mono">
+                  <span className="inline-block rounded px-2 py-0.5 border border-emerald-400/35 bg-emerald-400/10 text-emerald-200">
+                    Simulated
+                  </span>
+                  <span className="text-white/45">
+                    Emission: {formatSignedNavPerDay(supplyProjection.emissionPerDaySat)}
+                  </span>
+                  <span className="text-white/45">
+                    Burn: {formatSignedNavPerDay(-supplyProjection.burnPerDaySat)}
+                  </span>
+                  <span className={supplyProjection.netPerDaySat >= 0 ? 'text-neon-blue' : 'text-neon-pink'}>
+                    Net: {formatSignedNavPerDay(supplyProjection.netPerDaySat)}
+                  </span>
+                </div>
+              )}
+            </>
           ) : (
             <p className="text-gray-500 text-sm py-8 text-center">No chart data available.</p>
           )}

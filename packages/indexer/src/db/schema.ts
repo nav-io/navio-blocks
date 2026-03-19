@@ -112,12 +112,39 @@ export function initDatabase(dbPath: string): Database.Database {
       total_supply   INTEGER NOT NULL DEFAULT 0
     );
 
+    CREATE TABLE IF NOT EXISTS token_collections (
+      token_id         TEXT PRIMARY KEY,
+      token_type       TEXT NOT NULL DEFAULT 'unknown',
+      public_key       TEXT,
+      max_supply       INTEGER,
+      metadata_json    TEXT,
+      create_txid      TEXT NOT NULL REFERENCES transactions(txid) ON DELETE CASCADE,
+      create_output_hash TEXT,
+      create_height    INTEGER NOT NULL,
+      create_timestamp INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS nft_items (
+      token_id         TEXT NOT NULL,
+      nft_index        TEXT NOT NULL,
+      nft_id           TEXT PRIMARY KEY,
+      metadata_json    TEXT,
+      mint_txid        TEXT NOT NULL REFERENCES transactions(txid) ON DELETE CASCADE,
+      mint_output_hash TEXT,
+      mint_height      INTEGER NOT NULL,
+      mint_timestamp   INTEGER NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_transactions_block_height ON transactions(block_height);
     CREATE INDEX IF NOT EXISTS idx_outputs_txid              ON outputs(txid);
     CREATE INDEX IF NOT EXISTS idx_outputs_address           ON outputs(address);
     CREATE INDEX IF NOT EXISTS idx_inputs_prev_out           ON inputs(prev_out);
     CREATE INDEX IF NOT EXISTS idx_blocks_hash               ON blocks(hash);
     CREATE INDEX IF NOT EXISTS idx_blocks_timestamp          ON blocks(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_token_collections_type    ON token_collections(token_type);
+    CREATE INDEX IF NOT EXISTS idx_token_collections_height  ON token_collections(create_height);
+    CREATE INDEX IF NOT EXISTS idx_nft_items_token_id        ON nft_items(token_id);
+    CREATE INDEX IF NOT EXISTS idx_nft_items_mint_height     ON nft_items(mint_height);
   `);
 
   // Lightweight migrations for existing DBs.

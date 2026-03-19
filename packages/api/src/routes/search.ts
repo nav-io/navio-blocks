@@ -21,7 +21,7 @@ export default async function searchRoutes(app: FastifyInstance) {
   }>('/api/search', {
     schema: {
       tags: ['Search'],
-      description: 'Search for a block by height/hash, a transaction by txid, or an output by output hash',
+      description: 'Search for a block, transaction, output, token collection, or NFT',
       querystring: {
         type: 'object',
         required: ['q'],
@@ -33,16 +33,38 @@ export default async function searchRoutes(app: FastifyInstance) {
         200: {
           type: 'object',
           properties: {
-            type: { type: 'string', enum: ['block', 'transaction', 'output', 'none'] },
+            type: { type: 'string', enum: ['block', 'transaction', 'output', 'token', 'nft', 'none'] },
             block: { type: 'object', nullable: true },
             transaction: { type: 'object', nullable: true },
             output_hash: { type: 'string', nullable: true },
+            token_id: { type: 'string', nullable: true },
+            nft_index: { type: 'string', nullable: true },
           },
         },
       },
     },
   }, async (request): Promise<SearchResult> => {
     const q = request.query.q.trim();
+    const qLower = q.toLowerCase();
+
+    const nftMatch = q.match(/^([0-9a-fA-F]{64})#(\d+)$/);
+    if (nftMatch) {
+      const [_, tokenId, nftIndex] = nftMatch;
+      const nftRow = queryOne<{ token_id: string }>(
+        `SELECT token_id
+         FROM outputs
+         WHERE LOWER(token_id) = LOWER(?)
+         LIMIT 1`,
+        `${tokenId.toLowerCase()}#${nftIndex}`,
+      );
+      if (nftRow) {
+        return {
+          type: 'nft',
+          token_id: tokenId.toLowerCase(),
+          nft_index: nftIndex,
+        };
+      }
+    }
 
     // If the query is a number, search by block height
     if (/^\d+$/.test(q)) {
@@ -80,6 +102,25 @@ export default async function searchRoutes(app: FastifyInstance) {
       );
       if (outputRow) {
         return { type: 'output', output_hash: outputRow.output_hash };
+      }
+
+      const tokenRow = queryOne<{ token_id: string }>(
+        `SELECT token_id
+         FROM outputs
+         WHERE LOWER(
+           CASE
+             WHEN instr(token_id, '#') > 0
+               THEN substr(token_id, 1, instr(token_id, '#') - 1)
+             ELSE token_id
+           END
+         ) = LOWER(?)
+           AND token_id IS NOT NULL
+           AND token_id <> ''
+         LIMIT 1`,
+        qLower,
+      );
+      if (tokenRow) {
+        return { type: 'token', token_id: qLower };
       }
     }
 

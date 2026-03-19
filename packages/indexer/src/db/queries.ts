@@ -8,6 +8,7 @@ import type {
   Peer,
   PriceHistoryPoint,
 } from "@navio-blocks/shared";
+import type { TokenCollectionRecord, NftItemRecord } from "../sync/block.js";
 
 export class Queries {
   private stmtInsertBlock;
@@ -36,6 +37,8 @@ export class Queries {
   private stmtGetLatestSupply;
   private stmtGetTotalBurned;
   private stmtDeleteBlockSupply;
+  private stmtInsertTokenCollection;
+  private stmtInsertNftItem;
 
   constructor(private db: Database.Database) {
     this.stmtInsertBlock = db.prepare(`
@@ -167,6 +170,20 @@ export class Queries {
         (height, block_reward, fees_burned, fees_collected, total_supply)
       VALUES
         (@height, @block_reward, @fees_burned, @fees_collected, @total_supply)
+    `);
+
+    this.stmtInsertTokenCollection = db.prepare(`
+      INSERT OR REPLACE INTO token_collections
+        (token_id, token_type, public_key, max_supply, metadata_json, create_txid, create_output_hash, create_height, create_timestamp)
+      VALUES
+        (@token_id, @token_type, @public_key, @max_supply, @metadata_json, @create_txid, @create_output_hash, @create_height, @create_timestamp)
+    `);
+
+    this.stmtInsertNftItem = db.prepare(`
+      INSERT OR REPLACE INTO nft_items
+        (token_id, nft_index, nft_id, metadata_json, mint_txid, mint_output_hash, mint_height, mint_timestamp)
+      VALUES
+        (@token_id, @nft_index, @nft_id, @metadata_json, @mint_txid, @mint_output_hash, @mint_height, @mint_timestamp)
     `);
 
     this.stmtGetBlockSupply = db.prepare(
@@ -377,6 +394,33 @@ export class Queries {
     });
   }
 
+  insertTokenCollection(token: TokenCollectionRecord): void {
+    this.stmtInsertTokenCollection.run({
+      token_id: token.token_id,
+      token_type: token.token_type,
+      public_key: token.public_key ?? null,
+      max_supply: token.max_supply ?? null,
+      metadata_json: token.metadata_json ?? null,
+      create_txid: token.create_txid,
+      create_output_hash: token.create_output_hash ?? null,
+      create_height: token.create_height,
+      create_timestamp: token.create_timestamp,
+    });
+  }
+
+  insertNftItem(nft: NftItemRecord): void {
+    this.stmtInsertNftItem.run({
+      token_id: nft.token_id,
+      nft_index: nft.nft_index,
+      nft_id: nft.nft_id,
+      metadata_json: nft.metadata_json ?? null,
+      mint_txid: nft.mint_txid,
+      mint_output_hash: nft.mint_output_hash ?? null,
+      mint_height: nft.mint_height,
+      mint_timestamp: nft.mint_timestamp,
+    });
+  }
+
   getBlockSupply(height: number): BlockSupply | undefined {
     return this.stmtGetBlockSupply.get(height) as BlockSupply | undefined;
   }
@@ -403,6 +447,8 @@ export class Queries {
     const run = this.db.transaction((h: number) => {
       if (h <= 0) {
         // Full wipe
+        this.db.exec(`DELETE FROM nft_items`);
+        this.db.exec(`DELETE FROM token_collections`);
         this.db.exec(`DELETE FROM inputs`);
         this.db.exec(`DELETE FROM outputs`);
         this.db.exec(`DELETE FROM transactions`);
@@ -411,6 +457,8 @@ export class Queries {
         this.db.exec(`DELETE FROM sync_state`);
       } else {
         // Partial wipe from height h upwards
+        this.db.exec(`DELETE FROM nft_items WHERE mint_height >= ${h}`);
+        this.db.exec(`DELETE FROM token_collections WHERE create_height >= ${h}`);
         this.db.exec(`
           DELETE FROM inputs WHERE txid IN (
             SELECT txid FROM transactions WHERE block_height >= ${h}
@@ -436,7 +484,9 @@ export class Queries {
     block: Block,
     transactions: Transaction[],
     outputs: Output[],
-    inputs: Input[]
+    inputs: Input[],
+    tokenCollections: TokenCollectionRecord[] = [],
+    nftItems: NftItemRecord[] = []
   ): void {
     const batchInsert = this.db.transaction(() => {
       this.insertBlock(block);
@@ -448,6 +498,12 @@ export class Queries {
       }
       for (const inp of inputs) {
         this.insertInput(inp);
+      }
+      for (const token of tokenCollections) {
+        this.insertTokenCollection(token);
+      }
+      for (const nft of nftItems) {
+        this.insertNftItem(nft);
       }
     });
     batchInsert();

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { useApi } from '../hooks/useApi';
-import { truncateHash, formatNumber, timeAgo, satsToCoin, isRealToken } from '../utils';
+import { truncateHash, formatNumber, timeAgo, satsToCoin, isRealToken, splitTokenId } from '../utils';
 import { Pagination } from '../components/Pagination';
 import GlowCard from '../components/GlowCard';
 import OutputTypeBadge, { TYPE_BAR_COLORS } from '../components/OutputTypeBadge';
@@ -270,15 +270,40 @@ export default function OutputList() {
                       {o.output_type && <OutputTypeBadge type={o.output_type} />}
                     </td>
                     <td className="py-3 pr-4">
-                      {isRealToken(o.token_id) ? (
-                        <span className={`inline-block rounded px-2 py-0.5 text-xs font-mono font-medium border ${
-                          o.token_id!.includes('#')
-                            ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
-                            : 'bg-teal-500/20 text-teal-300 border-teal-500/30'
-                        }`}>
-                          {o.token_id!.includes('#') ? 'NFT' : 'Token'}
-                        </span>
-                      ) : o.token_id ? (
+                      {isRealToken(o.token_id) ? (() => {
+                        const tokenParts = splitTokenId(o.token_id);
+                        const tokenBase = tokenParts?.base;
+                        const nftIndex = tokenParts?.nftIndex;
+                        const isNft = Boolean(nftIndex);
+                        return (
+                          <div className="space-y-1">
+                            <span className={`inline-block rounded px-2 py-0.5 text-xs font-mono font-medium border ${
+                              isNft
+                                ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
+                                : 'bg-teal-500/20 text-teal-300 border-teal-500/30'
+                            }`}>
+                              {isNft ? 'NFT' : 'Token'}
+                            </span>
+                            {tokenBase && (
+                              isNft ? (
+                                <Link
+                                  to={`/nft/${tokenBase}/${nftIndex}`}
+                                  className="block font-mono text-[11px] text-neon-blue hover:text-neon-purple transition-colors"
+                                >
+                                  {truncateHash(o.token_id!, 8)}
+                                </Link>
+                              ) : (
+                                <Link
+                                  to={`/token/${tokenBase}`}
+                                  className="block font-mono text-[11px] text-neon-blue hover:text-neon-purple transition-colors"
+                                >
+                                  {truncateHash(tokenBase, 8)}
+                                </Link>
+                              )
+                            )}
+                          </div>
+                        );
+                      })() : o.token_id ? (
                         <span className="inline-block rounded px-2 py-0.5 text-xs font-mono font-medium border bg-blue-500/10 text-blue-300/60 border-blue-500/20">
                           NAV
                         </span>

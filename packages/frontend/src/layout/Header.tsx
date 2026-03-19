@@ -9,6 +9,7 @@ const navLinks = [
   { to: '/', label: 'Home' },
   { to: '/blocks', label: 'Blocks' },
   { to: '/outputs', label: 'Outputs' },
+  { to: '/tokens', label: 'Tokens' },
   { to: '/network', label: 'Network' },
   { to: '/supply', label: 'Supply' },
   { to: '/price', label: 'Price' },

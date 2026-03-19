@@ -15,6 +15,8 @@ interface PriceChartProps {
   emaColor?: string;
   medianData?: { timestamp: number; value: number }[];
   medianColor?: string;
+  projectionData?: { timestamp: number; value: number }[];
+  projectionColor?: string;
 }
 
 function toChartData(data: { timestamp: number; value: number }[]): Array<{
@@ -54,12 +56,15 @@ export default function PriceChart({
   emaColor = 'rgba(255, 255, 255, 0.75)',
   medianData,
   medianColor = 'rgba(255, 255, 255, 0.45)',
+  projectionData,
+  projectionColor = 'rgba(79, 179, 255, 0.9)',
 }: PriceChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Area'> | null>(null);
   const emaSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const medianSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const projectionSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -117,14 +122,24 @@ export default function PriceChart({
       lastValueVisible: false,
       priceLineVisible: false,
     };
+    const projectionOptions: DeepPartial<LineSeriesOptions> = {
+      color: projectionColor,
+      lineWidth: 2,
+      lineStyle: 2, // dashed
+      crosshairMarkerVisible: false,
+      lastValueVisible: false,
+      priceLineVisible: false,
+    };
 
     const series = chart.addAreaSeries(seriesOptions);
     const emaSeries = chart.addLineSeries(emaOptions);
     const medianSeries = chart.addLineSeries(medianOptions);
+    const projectionSeries = chart.addLineSeries(projectionOptions);
     chartRef.current = chart;
     seriesRef.current = series;
     emaSeriesRef.current = emaSeries;
     medianSeriesRef.current = medianSeries;
+    projectionSeriesRef.current = projectionSeries;
 
     // Handle resize
     const observer = new ResizeObserver((entries) => {
@@ -141,8 +156,9 @@ export default function PriceChart({
       seriesRef.current = null;
       emaSeriesRef.current = null;
       medianSeriesRef.current = null;
+      projectionSeriesRef.current = null;
     };
-  }, [color, emaColor, medianColor]);
+  }, [color, emaColor, medianColor, projectionColor]);
 
   // Update data when it changes
   useEffect(() => {
@@ -165,11 +181,18 @@ export default function PriceChart({
         medianSeriesRef.current.setData([]);
       }
     }
+    if (projectionSeriesRef.current) {
+      if (projectionData && projectionData.length > 0) {
+        projectionSeriesRef.current.setData(toChartData(projectionData));
+      } else {
+        projectionSeriesRef.current.setData([]);
+      }
+    }
 
     if (areaData.length > 0) {
       chartRef.current?.timeScale().fitContent();
     }
-  }, [data, emaData, medianData]);
+  }, [data, emaData, medianData, projectionData]);
 
   return (
     <div

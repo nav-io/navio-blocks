@@ -1,7 +1,7 @@
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api';
 import { useApi } from '../hooks/useApi';
-import { satsToCoin, truncateHash, formatNumber, isRealToken } from '../utils';
+import { satsToCoin, truncateHash, formatNumber, isRealToken, splitTokenId } from '../utils';
 import GlowCard from '../components/GlowCard';
 import OutputTypeBadge from '../components/OutputTypeBadge';
 import PrivacyBadge from '../components/PrivacyBadge';
@@ -38,7 +38,10 @@ export default function OutputDetail() {
 
   const isSpent = Boolean(output.spent);
   const hasToken = isRealToken(output.token_id);
-  const isNft = hasToken && output.token_id!.includes('#');
+  const tokenParts = splitTokenId(output.token_id);
+  const tokenBase = tokenParts?.base ?? '';
+  const nftIndex = tokenParts?.nftIndex;
+  const isNft = hasToken && Boolean(nftIndex);
   const spkDimmed = output.spk_hex === '51'; // OP_TRUE
 
   return (
@@ -140,13 +143,27 @@ export default function OutputDetail() {
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <span className="text-[10px] uppercase tracking-wider text-white/30">Token ID</span>
-              <span className="font-mono text-sm text-white break-all">{output.token_id!.split('#')[0]}</span>
-              <CopyButton text={output.token_id!.split('#')[0]} />
+              {tokenBase ? (
+                <Link
+                  to={`/token/${tokenBase}`}
+                  className="font-mono text-sm text-neon-blue hover:text-neon-pink transition-colors break-all"
+                >
+                  {tokenBase}
+                </Link>
+              ) : (
+                <span className="font-mono text-sm text-white break-all">{output.token_id}</span>
+              )}
+              {tokenBase && <CopyButton text={tokenBase} />}
             </div>
-            {isNft && (
+            {isNft && nftIndex && (
               <div className="flex items-center gap-2">
                 <span className="text-[10px] uppercase tracking-wider text-white/30">NFT Sub-ID</span>
-                <span className="font-mono text-sm text-white">{output.token_id!.split('#')[1]}</span>
+                <Link
+                  to={`/nft/${tokenBase}/${nftIndex}`}
+                  className="font-mono text-sm text-neon-blue hover:text-neon-pink transition-colors"
+                >
+                  {nftIndex}
+                </Link>
               </div>
             )}
           </div>

@@ -222,10 +222,12 @@ export interface PaginatedResponse<T> {
 }
 
 export interface SearchResult {
-  type: 'block' | 'transaction' | 'output' | 'none';
+  type: 'block' | 'transaction' | 'output' | 'token' | 'nft' | 'none';
   block?: Block;
   transaction?: Transaction;
   output_hash?: string;
+  token_id?: string;
+  nft_index?: string;
 }
 
 export type ChartPeriod = '24h' | '7d' | '30d' | '1y';
@@ -258,4 +260,67 @@ export interface SupplyChartPoint {
   height: number;
   total_supply: number;
   total_burned: number;
+}
+
+export type TokenKind = 'token' | 'nft' | 'unknown';
+
+export interface TokenMetadataEntry {
+  key: string;
+  value: string;
+}
+
+export interface MintedNftEntry {
+  index: string;
+  metadata: TokenMetadataEntry[];
+}
+
+export interface TokenActivity extends LatestOutput {
+  spent: boolean;
+  spending_txid?: string | null;
+  spending_vin?: number | null;
+}
+
+export interface TokenSummary {
+  token_id: string;
+  type: TokenKind;
+  public_key?: string;
+  metadata: TokenMetadataEntry[];
+  max_supply: number | null;
+  current_supply: number | null;
+  mint_event_count: number;
+  minted_nft_count: number;
+  output_count: number;
+  tx_count: number;
+  first_seen_height: number | null;
+  first_seen_timestamp: number | null;
+  last_seen_height: number | null;
+  last_seen_timestamp: number | null;
+}
+
+export interface TokenDetail extends TokenSummary {
+  total_activity: number;
+  activity: TokenActivity[];
+  minted_nft: MintedNftEntry[];
+}
+
+export interface NftDetail {
+  token_id: string;
+  nft_index: string;
+  nft_id: string;
+  collection_type: TokenKind;
+  collection_public_key?: string;
+  collection_metadata: TokenMetadataEntry[];
+  max_supply: number | null;
+  nft_metadata: TokenMetadataEntry[];
+  output_count: number;
+  tx_count: number;
+  first_seen_height: number | null;
+  first_seen_timestamp: number | null;
+  last_seen_height: number | null;
+  last_seen_timestamp: number | null;
+  current_owner_output_hash: string | null;
+  current_owner_txid: string | null;
+  current_owner_address: string | null;
+  total_activity: number;
+  activity: TokenActivity[];
 }

@@ -71,6 +71,19 @@ export function tokenLabel(tokenId: string | undefined | null): string | null {
   return tokenId;
 }
 
+export function splitTokenId(tokenId: string | undefined | null): { base: string; nftIndex?: string } | null {
+  if (!tokenId) return null;
+  const base = tokenId.replace(/#.*$/, '');
+  if (base === NATIVE_TOKEN_ID) return null;
+  const hashIndex = tokenId.indexOf('#');
+  if (hashIndex < 0) return { base };
+  const nftIndex = tokenId.slice(hashIndex + 1);
+  return {
+    base,
+    nftIndex: nftIndex.length > 0 ? nftIndex : undefined,
+  };
+}
+
 export function satsToCoinShort(sats: number): string {
   const nav = sats / 1e8;
   if (nav >= 1e6) return (nav / 1e6).toFixed(2) + 'M';

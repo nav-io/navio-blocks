@@ -6,6 +6,9 @@ import BlockDetail from './pages/BlockDetail';
 import TxDetail from './pages/TxDetail';
 import OutputDetail from './pages/OutputDetail';
 import OutputList from './pages/OutputList';
+import Tokens from './pages/Tokens';
+import TokenDetail from './pages/TokenDetail';
+import NftDetail from './pages/NftDetail';
 import Network from './pages/Network';
 import Price from './pages/Price';
 import Supply from './pages/Supply';
@@ -21,6 +24,9 @@ export default function App() {
           <Route path="/tx/:txid" element={<TxDetail />} />
           <Route path="/output/:hash" element={<OutputDetail />} />
           <Route path="/outputs" element={<OutputList />} />
+          <Route path="/tokens" element={<Tokens />} />
+          <Route path="/token/:tokenId" element={<TokenDetail />} />
+          <Route path="/nft/:tokenId/:index" element={<NftDetail />} />
           <Route path="/network" element={<Network />} />
           <Route path="/supply" element={<Supply />} />
           <Route path="/price" element={<Price />} />

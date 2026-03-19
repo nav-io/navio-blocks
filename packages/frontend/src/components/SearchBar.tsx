@@ -28,11 +28,15 @@ export function SearchBar({ className = '', compact = false }: SearchBarProps) {
         navigate(`/tx/${result.transaction.txid}`);
       } else if (result.type === 'output' && result.output_hash) {
         navigate(`/output/${result.output_hash}`);
+      } else if (result.type === 'token' && result.token_id) {
+        navigate(`/token/${result.token_id}`);
+      } else if (result.type === 'nft' && result.token_id && result.nft_index) {
+        navigate(`/nft/${result.token_id}/${result.nft_index}`);
       } else {
         setError('No results found');
       }
     } catch {
-      setError('Search failed. Try a block height, hash, txid, or output hash.');
+      setError('Search failed. Try a block height/hash, txid, output hash, token ID, or token#nft.');
     } finally {
       setSearching(false);
     }
@@ -44,7 +48,7 @@ export function SearchBar({ className = '', compact = false }: SearchBarProps) {
         type="text"
         value={query}
         onChange={(e) => { setQuery(e.target.value); setError(''); }}
-        placeholder="Block height/hash, txid, or output hash..."
+        placeholder="Block/tx/output, token ID, or token#nft..."
         className={`w-full bg-navy-light/90 border border-white/15 rounded-xl text-white placeholder-white/35 focus:outline-none focus:border-neon-blue/60 focus:ring-1 focus:ring-neon-blue/30 transition-all font-mono ${
           compact ? 'pl-4 pr-24 py-2.5 text-xs' : 'pl-5 pr-28 py-4 text-sm'
         }`}
