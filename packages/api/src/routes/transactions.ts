@@ -23,11 +23,17 @@ function toTransaction(row: Record<string, unknown>): Transaction {
 }
 
 function toInput(row: Record<string, unknown>): Input {
+  const outputType =
+    typeof row.output_type === 'string'
+      ? (normalizeOutputType(row.output_type, row) as Input['output_type'])
+      : undefined;
+
   return {
     txid: String(row.txid ?? ''),
     vin: Number(row.vin ?? 0),
     prev_out: typeof row.prev_out === 'string' ? row.prev_out : '',
     is_coinbase: Boolean(row.is_coinbase),
+    output_type: outputType,
   };
 }
 
@@ -156,6 +162,7 @@ const txResponseSchema = {
           vin: { type: 'integer' },
           prev_out: { type: 'string' },
           is_coinbase: { type: 'boolean' },
+          output_type: { type: 'string', nullable: true },
         },
       },
     },
@@ -637,7 +644,16 @@ export default async function transactionsRoutes(app: FastifyInstance) {
     const tx = toTransaction(txRow);
 
     const inputRows = queryAll<Record<string, unknown>>(
-      'SELECT * FROM inputs WHERE txid = ? ORDER BY vin',
+      `SELECT
+         i.txid,
+         i.vin,
+         i.prev_out,
+         i.is_coinbase,
+         o.output_type
+       FROM inputs i
+       LEFT JOIN outputs o ON o.output_hash = i.prev_out
+       WHERE i.txid = ?
+       ORDER BY i.vin`,
       tx.txid,
     );
 
@@ -686,6 +702,15 @@ export default async function transactionsRoutes(app: FastifyInstance) {
       )?.output_hash;
     };
 
+    const resolveOutputTypeByHash = (outputHash: string): Input['output_type'] | undefined => {
+      const row = queryOne<{ output_type: string }>(
+        'SELECT output_type FROM outputs WHERE output_hash = ?',
+        outputHash,
+      );
+      if (typeof row?.output_type !== 'string') return undefined;
+      return normalizeOutputType(row.output_type) as Input['output_type'];
+    };
+
     const rawVins = Array.isArray(naviodTx?.vin)
       ? (naviodTx?.vin as Record<string, unknown>[])
       : [];
@@ -695,9 +720,11 @@ export default async function transactionsRoutes(app: FastifyInstance) {
       if (input.is_coinbase || input.prev_out) return input;
 
       const prevOut = extractPrevOutFromRawVin(rawVins[index], resolveOutputHashByTxN);
+      const outputType = prevOut ? resolveOutputTypeByHash(prevOut) : undefined;
       return {
         ...input,
         prev_out: prevOut,
+        output_type: outputType ?? input.output_type,
       };
     });
 

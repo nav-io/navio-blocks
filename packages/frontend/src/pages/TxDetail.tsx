@@ -35,7 +35,7 @@ function InputRow({ input, index }: { input: Input; index: number }) {
           <span className="text-xs text-white/40 font-mono">Newly minted coins</span>
         </div>
       ) : (
-        <div className="flex items-center gap-1.5 min-w-0">
+        <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
           <span className="text-[10px] uppercase tracking-wider text-white/30 shrink-0">Outpoint</span>
           {input.prev_out ? (
             <>
@@ -47,6 +47,7 @@ function InputRow({ input, index }: { input: Input; index: number }) {
                 {truncateHash(input.prev_out, 12)}
               </Link>
               <CopyButton text={input.prev_out} />
+              {input.output_type && <OutputTypeBadge type={input.output_type} />}
             </>
           ) : (
             <span className="font-mono text-sm text-white/40 italic">Unknown previous output</span>

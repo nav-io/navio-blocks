@@ -120,6 +120,7 @@ export interface Input {
   vin: number;
   prev_out: string;
   is_coinbase: boolean;
+  output_type?: OutputType;
 }
 
 // Transaction with full details
