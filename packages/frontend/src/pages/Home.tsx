@@ -224,7 +224,7 @@ export default function Home() {
       {/* Hero */}
       <section className="text-center pt-16 pb-10 px-4">
         <h1 className="text-4xl sm:text-5xl md:text-6xl pb-6 font-bold gradient-text mb-4">
-          navio Block Explorer
+          navio block explorer
         </h1>
         <SearchBar className="max-w-2xl mx-auto" />
       </section>

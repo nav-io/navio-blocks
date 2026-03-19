@@ -5,6 +5,8 @@ export interface RpcConfig {
   password: string;
 }
 
+export type AddNodeCommand = "add" | "remove" | "onetry";
+
 export class RpcClient {
   private url: string;
   private authHeader: string;
@@ -96,5 +98,14 @@ export class RpcClient {
 
   async getNodeAddresses(count = 0): Promise<unknown[]> {
     return (await this.call("getnodeaddresses", [count])) as unknown[];
+  }
+
+  async addNode(node: string, command: AddNodeCommand = "add"): Promise<void> {
+    await this.call("addnode", [node, command]);
+  }
+
+  async getAddedNodeInfo(node?: string): Promise<unknown[]> {
+    const params = node ? [node] : [];
+    return (await this.call("getaddednodeinfo", params)) as unknown[];
   }
 }

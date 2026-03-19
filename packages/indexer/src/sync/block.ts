@@ -108,9 +108,15 @@ function extractSpkFields(rpcVout: Record<string, unknown>): {
 } {
   const spk = rpcVout.scriptPubKey as Record<string, unknown> | undefined;
   if (!spk) return {};
+  let spk_type = typeof spk.type === "string" ? spk.type : undefined;
+  const spk_hex = typeof spk.hex === "string" ? spk.hex : undefined;
+  // OP_TRUE (0x51) is a standard script in Navcoin PoS; don't label as nonstandard
+  if (spk_type === "nonstandard" && spk_hex === "51") {
+    spk_type = "op_true";
+  }
   return {
-    spk_type: typeof spk.type === "string" ? spk.type : undefined,
-    spk_hex: typeof spk.hex === "string" ? spk.hex : undefined,
+    spk_type,
+    spk_hex,
     spk_asm: typeof spk.asm === "string" ? spk.asm : undefined,
   };
 }

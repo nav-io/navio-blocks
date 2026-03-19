@@ -196,11 +196,14 @@ async function main(): Promise<void> {
   poller.start(POLL_INTERVAL);
 
   // Run initial peer and price updates
-  void updatePeers(rpc, queries);
+  void updatePeers(rpc, queries, network);
   void updatePrice(queries);
 
   // Set up recurring peer and price updates
-  const peerTimer = setInterval(() => void updatePeers(rpc, queries), PEER_INTERVAL);
+  const peerTimer = setInterval(
+    () => void updatePeers(rpc, queries, network),
+    PEER_INTERVAL
+  );
   const priceTimer = setInterval(() => void updatePrice(queries), PRICE_INTERVAL);
 
   console.log("[indexer] Started");

@@ -138,7 +138,10 @@ export function initDatabase(dbPath: string): Database.Database {
   db.exec(`UPDATE outputs SET output_type = 'transfer' WHERE output_type IN ('blsct', 'native', 'unstake')`);
   db.exec(`UPDATE outputs SET output_type = 'fee' WHERE output_type = 'data'`);
   db.exec(`UPDATE outputs SET output_type = 'transfer' WHERE output_type = 'unknown' AND is_blsct = 1`);
-  db.exec(`UPDATE outputs SET output_type = 'transfer' WHERE output_type = 'unknown' AND (token_id IS NULL OR token_id = '0000000000000000000000000000000000000000000000000000000000000000') AND spk_type IN ('nonstandard', 'pubkeyhash', 'scripthash', 'witness_v0_keyhash', 'witness_v0_scripthash', 'witness_v1_taproot', 'pubkey', 'multisig')`);
+  db.exec(`UPDATE outputs SET output_type = 'transfer' WHERE output_type = 'unknown' AND (token_id IS NULL OR token_id = '0000000000000000000000000000000000000000000000000000000000000000') AND spk_type IN ('nonstandard', 'op_true', 'pubkeyhash', 'scripthash', 'witness_v0_keyhash', 'witness_v0_scripthash', 'witness_v1_taproot', 'pubkey', 'multisig')`);
+
+  // OP_TRUE (51) scripts: remap nonstandard → op_true for correct display
+  db.exec(`UPDATE outputs SET spk_type = 'op_true' WHERE spk_type = 'nonstandard' AND spk_hex = '51'`);
 
   return db;
 }

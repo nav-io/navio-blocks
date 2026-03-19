@@ -62,6 +62,26 @@ cp .env.example .env
 | `RPC_USER` | | naviod RPC username |
 | `RPC_PASSWORD` | | naviod RPC password |
 | `NETWORK` | `mainnet` | Network type: `mainnet` or `testnet` (affects reward calc) |
+| `TESTNET_BOOTSTRAP_NODES` | `testnet.nav.io,testnet2.nav.io` | Comma-separated seed nodes for direct testnet P2P crawling |
+| `MAINNET_BOOTSTRAP_NODES` | | Comma-separated seed nodes for direct mainnet P2P crawling |
+| `P2P_PORT` | | Optional port override for all direct P2P peer crawls |
+| `TESTNET_P2P_PORT` | `33670` | Default direct testnet P2P port when seed entry omits a port |
+| `MAINNET_P2P_PORT` | `8333` | Default direct mainnet P2P port when seed entry omits a port |
+| `P2P_MESSAGE_MAGIC_HEX` | | Optional message-start override (8 hex chars), supersedes network-specific magic |
+| `P2P_TESTNET_MAGIC_HEX` | `1c03bb83` | Testnet message-start bytes for direct P2P wire parsing |
+| `P2P_MAINNET_MAGIC_HEX` | `dbd2b1ac` | Mainnet message-start bytes for direct P2P wire parsing |
+| `P2P_PROTOCOL_VERSION` | `70016` | Protocol version announced in direct P2P `version` handshake |
+| `P2P_REQUEST_TIMEOUT_MS` | `4500` | Timeout for a single direct P2P handshake/`getaddr` request |
+| `P2P_CRAWL_CONCURRENCY` | `24` | Concurrent direct P2P peer crawls per discovery round |
+| `PEER_DISCOVERY_ROUNDS` | `3` | Seeder-style direct P2P crawl rounds (`version`/`verack` + `getaddr`) |
+| `PEER_DISCOVERY_BATCH_SIZE` | `64` | Nodes to directly crawl per round |
+| `PEER_DISCOVERY_WAIT_MS` | `1200` | Wait between crawl rounds before processing newly learned peers |
+| `PEER_DISCOVERY_MAX_CANDIDATES` | `2000` | Upper bound for addresses tracked in one crawl cycle |
+| `PEER_CONNECT_TIMEOUT_MS` | `2000` | TCP timeout for connectivity probes |
+| `PEER_CONNECT_CONCURRENCY` | `48` | Parallel TCP probes when testing discovered peers |
+| `PEER_CONNECT_TEST_LIMIT` | `300` | Number of discovered peers to connectivity-test per cycle |
+| `PEER_DISCOVERY_FILTER_UNREACHABLE` | `true` | When true on testnet, drop probe-tested peers that fail TCP |
+| `PEER_GEO_LOOKUP_LIMIT` | `80` | Max uncached geo lookups per cycle (rate-limited to stay under ip-api limits) |
 | `API_PORT` | `3001` | API server port |
 | `DB_PATH` | `./navio-blocks.db` | SQLite database path |
 | `VITE_API_URL` | `http://localhost:3001` | Frontend API URL (dev only) |
