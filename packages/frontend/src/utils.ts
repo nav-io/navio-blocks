@@ -96,6 +96,36 @@ export function shouldShowToken(
   return true;
 }
 
+export function predicateToOutputType(predicate: string | undefined | null): string | undefined {
+  if (!predicate) return undefined;
+  const normalizedPredicate = predicate.trim().toUpperCase();
+  switch (normalizedPredicate) {
+    case 'CREATE_TOKEN':
+      return 'token_create';
+    case 'MINT':
+    case 'MINT_TOKEN':
+      return 'token_mint';
+    case 'NFT_MINT':
+    case 'MINT_NFT':
+      return 'nft_mint';
+    case 'PAY_FEE':
+    case 'DATA':
+      return 'fee';
+    default:
+      return undefined;
+  }
+}
+
+export function shouldShowPredicateBadge(
+  predicate: string | undefined | null,
+  outputType: string | undefined | null,
+): boolean {
+  if (!predicate) return false;
+  const fromPredicate = predicateToOutputType(predicate);
+  if (!fromPredicate || !outputType) return true;
+  return fromPredicate !== outputType;
+}
+
 export function satsToCoinShort(sats: number): string {
   const nav = sats / 1e8;
   if (nav >= 1e6) return (nav / 1e6).toFixed(2) + 'M';

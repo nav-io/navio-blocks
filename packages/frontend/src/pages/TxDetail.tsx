@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api';
 import { useApi } from '../hooks/useApi';
-import { satsToCoin, truncateHash, formatNumber, formatBytes, splitTokenId, shouldShowToken } from '../utils';
+import { satsToCoin, truncateHash, formatNumber, formatBytes, splitTokenId, shouldShowPredicateBadge, shouldShowToken } from '../utils';
 import GlowCard from '../components/GlowCard';
 import PrivacyBadge from '../components/PrivacyBadge';
 import OutputTypeBadge from '../components/OutputTypeBadge';
@@ -108,7 +108,7 @@ function OutputRow({ output, index }: { output: Output; index: number }) {
                   {output.token_id!.includes('#') ? 'NFT' : 'Token'}
                 </span>
               )}
-              {output.predicate && (
+              {shouldShowPredicateBadge(output.predicate, output.output_type) && (
                 <span className="inline-block rounded px-2 py-0.5 text-xs font-mono font-medium border border-amber-500/30 bg-amber-500/15 text-amber-200">
                   {output.predicate}
                 </span>

@@ -222,10 +222,38 @@ function sha256d(bytes: Uint8Array): Buffer {
   return crypto.createHash("sha256").update(first).digest();
 }
 
+function encodeCompactSize(length: number): Buffer {
+  if (!Number.isInteger(length) || length < 0) {
+    throw new Error(`Invalid compact size length: ${length}`);
+  }
+  if (length < 253) {
+    return Buffer.from([length]);
+  }
+  if (length <= 0xffff) {
+    const out = Buffer.allocUnsafe(3);
+    out[0] = 253;
+    out.writeUInt16LE(length, 1);
+    return out;
+  }
+  if (length <= 0xffffffff) {
+    const out = Buffer.allocUnsafe(5);
+    out[0] = 254;
+    out.writeUInt32LE(length, 1);
+    return out;
+  }
+
+  const out = Buffer.allocUnsafe(9);
+  out[0] = 255;
+  out.writeBigUInt64LE(BigInt(length), 1);
+  return out;
+}
+
 function tokenIdFromPublicKeyHex(publicKeyHex: string | undefined): string | undefined {
   const normalized = normalizeHexString(publicKeyHex);
   if (!normalized) return undefined;
-  const hash = sha256d(Buffer.from(normalized, "hex"));
+  const publicKeyBytes = Buffer.from(normalized, "hex");
+  const serialized = Buffer.concat([encodeCompactSize(publicKeyBytes.length), publicKeyBytes]);
+  const hash = sha256d(serialized);
   return Buffer.from(hash).reverse().toString("hex");
 }
 

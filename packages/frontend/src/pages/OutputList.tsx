@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { useApi } from '../hooks/useApi';
-import { truncateHash, formatNumber, timeAgo, satsToCoin, splitTokenId, shouldShowToken } from '../utils';
+import { truncateHash, formatNumber, timeAgo, satsToCoin, splitTokenId, shouldShowPredicateBadge, shouldShowToken } from '../utils';
 import { Pagination } from '../components/Pagination';
 import GlowCard from '../components/GlowCard';
 import OutputTypeBadge, { TYPE_BAR_COLORS } from '../components/OutputTypeBadge';
@@ -269,7 +269,7 @@ export default function OutputList() {
                     <td className="py-3 pr-4">
                       <div className="space-y-1">
                         {o.output_type && <OutputTypeBadge type={o.output_type} />}
-                        {o.predicate && (
+                        {shouldShowPredicateBadge(o.predicate, o.output_type) && (
                           <span className="inline-block rounded px-2 py-0.5 text-[10px] font-mono font-medium border border-amber-500/30 bg-amber-500/15 text-amber-200">
                             {o.predicate}
                           </span>
