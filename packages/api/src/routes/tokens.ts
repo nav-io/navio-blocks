@@ -239,17 +239,23 @@ type TokenStatsRow = {
   public_key?: string | null;
   max_supply?: number | null;
   metadata_json?: string | null;
+  create_predicate_args_json?: string | null;
 };
 
 function toTokenSummary(row: TokenStatsRow): TokenSummary {
   const fallbackType: TokenKind = row.has_nft_activity === 1 ? "nft" : "token";
   const type = normalizeKind(row.token_type) === "unknown" ? fallbackType : normalizeKind(row.token_type);
 
+  const metadataFromCollection = parseMetadata(row.metadata_json ?? null);
+  const fallbackMetadata = metadataFromUnknown(parsePredicateArgs(row.create_predicate_args_json ?? null)?.metadata);
+  const metadata =
+    metadataFromCollection.length > 0 ? metadataFromCollection : fallbackMetadata;
+
   return {
     token_id: row.token_id,
     type,
     public_key: candidateString(row.public_key ?? null) ?? undefined,
-    metadata: parseMetadata(row.metadata_json ?? null),
+    metadata,
     max_supply:
       typeof row.max_supply === "number"
         ? row.max_supply
@@ -348,7 +354,15 @@ export default async function tokenRoutes(app: FastifyInstance) {
          ${HAS_TOKEN_COLLECTIONS ? "tc.token_type" : "NULL AS token_type"},
          ${HAS_TOKEN_COLLECTIONS ? "tc.public_key" : "NULL AS public_key"},
          ${HAS_TOKEN_COLLECTIONS ? "tc.max_supply" : "NULL AS max_supply"},
-         ${HAS_TOKEN_COLLECTIONS ? "tc.metadata_json" : "NULL AS metadata_json"}
+         ${HAS_TOKEN_COLLECTIONS ? "tc.metadata_json" : "NULL AS metadata_json"},
+         (SELECT oc.predicate_args_json
+          FROM outputs oc
+          JOIN transactions tc ON tc.txid = oc.txid
+          WHERE oc.token_id IS NOT NULL AND oc.token_id <> ''
+            AND LOWER(CASE WHEN instr(oc.token_id, '#') > 0 THEN substr(oc.token_id, 1, instr(oc.token_id, '#') - 1) ELSE oc.token_id END) = ts.token_id
+            AND UPPER(COALESCE(oc.predicate, '')) = 'CREATE_TOKEN'
+          ORDER BY tc.block_height ASC, tc.tx_index ASC, oc.n ASC
+          LIMIT 1) AS create_predicate_args_json
        FROM token_stats ts
        ${HAS_TOKEN_COLLECTIONS ? "LEFT JOIN token_collections tc ON LOWER(tc.token_id) = ts.token_id" : ""}
        WHERE (
