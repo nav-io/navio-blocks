@@ -32,8 +32,13 @@ function tableExists(name: string): boolean {
   }
 }
 
-const HAS_TOKEN_COLLECTIONS = tableExists("token_collections");
-const HAS_NFT_ITEMS = tableExists("nft_items");
+function hasTokenCollections(): boolean {
+  return tableExists("token_collections");
+}
+
+function hasNftItems(): boolean {
+  return tableExists("nft_items");
+}
 
 function baseTokenExpr(alias: string): string {
   return `LOWER(CASE
@@ -231,6 +236,7 @@ type TokenStatsRow = {
   tx_count: number;
   mint_event_count: number;
   minted_nft_count: number;
+  current_supply?: number | null;
   first_seen_height: number | null;
   first_seen_timestamp: number | null;
   last_seen_height: number | null;
@@ -244,25 +250,54 @@ type TokenStatsRow = {
 
 function toTokenSummary(row: TokenStatsRow): TokenSummary {
   const fallbackType: TokenKind = row.has_nft_activity === 1 ? "nft" : "token";
-  const type = normalizeKind(row.token_type) === "unknown" ? fallbackType : normalizeKind(row.token_type);
+  const parsedType = normalizeKind(row.token_type);
+  const createPredicateArgs = parsePredicateArgs(row.create_predicate_args_json ?? null);
+  const fallbackTypeFromPredicate = normalizeKind(createPredicateArgs?.token_type);
+  const type =
+    parsedType !== "unknown"
+      ? parsedType
+      : fallbackTypeFromPredicate !== "unknown"
+        ? fallbackTypeFromPredicate
+        : fallbackType;
 
   const metadataFromCollection = parseMetadata(row.metadata_json ?? null);
-  const fallbackMetadata = metadataFromUnknown(parsePredicateArgs(row.create_predicate_args_json ?? null)?.metadata);
+  const fallbackMetadata = metadataFromUnknown(createPredicateArgs?.metadata);
   const metadata =
     metadataFromCollection.length > 0 ? metadataFromCollection : fallbackMetadata;
+
+  const maxSupplyFromCollection =
+    typeof row.max_supply === "number"
+      ? row.max_supply
+      : row.max_supply == null
+        ? null
+        : Number(row.max_supply);
+  const fallbackMaxSupply = toNullableNumber(createPredicateArgs?.max_supply);
+  const maxSupply =
+    maxSupplyFromCollection != null
+      ? maxSupplyFromCollection
+      : fallbackMaxSupply ?? null;
+
+  const currentSupplyValue =
+    typeof row.current_supply === "number"
+      ? row.current_supply
+      : row.current_supply == null
+        ? null
+        : Number(row.current_supply);
+
+  const currentSupply =
+    currentSupplyValue != null && Number.isFinite(currentSupplyValue)
+      ? currentSupplyValue
+      : type === "nft"
+        ? Number(row.minted_nft_count ?? 0)
+        : 0;
 
   return {
     token_id: row.token_id,
     type,
-    public_key: candidateString(row.public_key ?? null) ?? undefined,
+    public_key: candidateString(row.public_key ?? null) ?? candidateString(createPredicateArgs?.public_key) ?? undefined,
     metadata,
-    max_supply:
-      typeof row.max_supply === "number"
-        ? row.max_supply
-        : row.max_supply == null
-          ? null
-          : Number(row.max_supply),
-    current_supply: null,
+    max_supply: maxSupply,
+    current_supply: currentSupply,
     mint_event_count: Number(row.mint_event_count ?? 0),
     minted_nft_count: Number(row.minted_nft_count ?? 0),
     output_count: Number(row.output_count ?? 0),
@@ -309,12 +344,14 @@ export default async function tokenRoutes(app: FastifyInstance) {
     const limit = Math.min(Math.max(Number(request.query.limit) || 20, 1), 100);
     const offset = Math.max(Number(request.query.offset) || 0, 0);
     const type = request.query.type ?? "all";
+    const hasTokenCollectionsTable = hasTokenCollections();
+    const hasNftItemsTable = hasNftItems();
 
     const baseExpr = baseTokenExpr("o");
-    const typeExpr = HAS_TOKEN_COLLECTIONS
+    const typeExpr = hasTokenCollectionsTable
       ? `COALESCE(tc.token_type, CASE WHEN ts.has_nft_activity = 1 THEN 'nft' ELSE 'token' END)`
       : `CASE WHEN ts.has_nft_activity = 1 THEN 'nft' ELSE 'token' END`;
-    const mintedNftExpr = HAS_NFT_ITEMS
+    const mintedNftExpr = hasNftItemsTable
       ? `COALESCE((SELECT COUNT(*) FROM nft_items ni WHERE LOWER(ni.token_id) = ts.token_id), ts.minted_nft_count)`
       : `ts.minted_nft_count`;
 
@@ -326,6 +363,7 @@ export default async function tokenRoutes(app: FastifyInstance) {
            COUNT(*) AS output_count,
            COUNT(DISTINCT o.txid) AS tx_count,
            SUM(CASE WHEN o.output_type IN ('token_mint', 'nft_mint') THEN 1 ELSE 0 END) AS mint_event_count,
+           COALESCE(SUM(CASE WHEN o.output_type = 'token_mint' THEN CAST(json_extract(o.predicate_args_json, '$.amount') AS INTEGER) ELSE 0 END), 0) AS minted_token_supply,
            COUNT(DISTINCT CASE WHEN o.token_id LIKE '%#%' THEN substr(o.token_id, instr(o.token_id, '#') + 1) END) AS minted_nft_count,
            MIN(t.block_height) AS first_seen_height,
            MIN(b.timestamp) AS first_seen_timestamp,
@@ -347,14 +385,18 @@ export default async function tokenRoutes(app: FastifyInstance) {
          ts.tx_count,
          ts.mint_event_count,
          ${mintedNftExpr} AS minted_nft_count,
+         CASE
+           WHEN ts.has_nft_activity = 1 THEN ${mintedNftExpr}
+           ELSE ts.minted_token_supply
+         END AS current_supply,
          ts.first_seen_height,
          ts.first_seen_timestamp,
          ts.last_seen_height,
          ts.last_seen_timestamp,
-         ${HAS_TOKEN_COLLECTIONS ? "tc.token_type" : "NULL AS token_type"},
-         ${HAS_TOKEN_COLLECTIONS ? "tc.public_key" : "NULL AS public_key"},
-         ${HAS_TOKEN_COLLECTIONS ? "tc.max_supply" : "NULL AS max_supply"},
-         ${HAS_TOKEN_COLLECTIONS ? "tc.metadata_json" : "NULL AS metadata_json"},
+         ${hasTokenCollectionsTable ? "tc.token_type" : "NULL AS token_type"},
+         ${hasTokenCollectionsTable ? "tc.public_key" : "NULL AS public_key"},
+         ${hasTokenCollectionsTable ? "tc.max_supply" : "NULL AS max_supply"},
+         ${hasTokenCollectionsTable ? "tc.metadata_json" : "NULL AS metadata_json"},
          (SELECT oc.predicate_args_json
           FROM outputs oc
           JOIN transactions tc ON tc.txid = oc.txid
@@ -364,7 +406,7 @@ export default async function tokenRoutes(app: FastifyInstance) {
           ORDER BY tc.block_height ASC, tc.tx_index ASC, oc.n ASC
           LIMIT 1) AS create_predicate_args_json
        FROM token_stats ts
-       ${HAS_TOKEN_COLLECTIONS ? "LEFT JOIN token_collections tc ON LOWER(tc.token_id) = ts.token_id" : ""}
+       ${hasTokenCollectionsTable ? "LEFT JOIN token_collections tc ON LOWER(tc.token_id) = ts.token_id" : ""}
        WHERE (
          ? = 'all'
          OR (? = 'token' AND ${typeExpr} = 'token')
@@ -394,7 +436,7 @@ export default async function tokenRoutes(app: FastifyInstance) {
        )
        SELECT COUNT(*) AS count
        FROM token_stats ts
-       ${HAS_TOKEN_COLLECTIONS ? "LEFT JOIN token_collections tc ON LOWER(tc.token_id) = ts.token_id" : ""}
+       ${hasTokenCollectionsTable ? "LEFT JOIN token_collections tc ON LOWER(tc.token_id) = ts.token_id" : ""}
        WHERE (
          ? = 'all'
          OR (? = 'token' AND ${typeExpr} = 'token')
@@ -451,8 +493,10 @@ export default async function tokenRoutes(app: FastifyInstance) {
 
     const limit = Math.min(Math.max(Number(request.query.limit) || 20, 1), 100);
     const offset = Math.max(Number(request.query.offset) || 0, 0);
+    const hasTokenCollectionsTable = hasTokenCollections();
+    const hasNftItemsTable = hasNftItems();
 
-    const collectionRow = HAS_TOKEN_COLLECTIONS
+    const collectionRow = hasTokenCollectionsTable
       ? queryOne<{
           token_type: string | null;
           public_key: string | null;
@@ -472,6 +516,7 @@ export default async function tokenRoutes(app: FastifyInstance) {
       tx_count: number;
       mint_event_count: number;
       minted_nft_count: number;
+      current_supply: number;
       first_seen_height: number | null;
       first_seen_timestamp: number | null;
       last_seen_height: number | null;
@@ -483,6 +528,7 @@ export default async function tokenRoutes(app: FastifyInstance) {
          COUNT(DISTINCT o.txid) AS tx_count,
          SUM(CASE WHEN o.output_type IN ('token_mint', 'nft_mint') THEN 1 ELSE 0 END) AS mint_event_count,
          COUNT(DISTINCT CASE WHEN o.token_id LIKE '%#%' THEN substr(o.token_id, instr(o.token_id, '#') + 1) END) AS minted_nft_count,
+         COALESCE(SUM(CASE WHEN o.output_type = 'token_mint' THEN CAST(json_extract(o.predicate_args_json, '$.amount') AS INTEGER) ELSE 0 END), 0) AS current_supply,
          MIN(t.block_height) AS first_seen_height,
          MIN(b.timestamp) AS first_seen_timestamp,
          MAX(t.block_height) AS last_seen_height,
@@ -513,7 +559,7 @@ export default async function tokenRoutes(app: FastifyInstance) {
     const fallbackMaxSupply = toNullableNumber(createPredicateArgs?.max_supply);
     const fallbackType = normalizeKind(createPredicateArgs?.token_type);
 
-    const mintedNfts = HAS_NFT_ITEMS
+    const mintedNfts = hasNftItemsTable
       ? queryAll<{ nft_index: string; metadata_json: string | null }>(
           `SELECT nft_index, metadata_json
            FROM nft_items
@@ -585,6 +631,12 @@ export default async function tokenRoutes(app: FastifyInstance) {
       maxSupplyFromCollection != null
         ? maxSupplyFromCollection
         : fallbackMaxSupply ?? null;
+    const currentSupply =
+      collectionType === "nft"
+        ? (mintedNfts.length > 0
+            ? mintedNfts.length
+            : Number(stats?.minted_nft_count ?? 0))
+        : Number(stats?.current_supply ?? 0);
 
     const detail: TokenDetail = {
       token_id: tokenId,
@@ -592,7 +644,7 @@ export default async function tokenRoutes(app: FastifyInstance) {
       public_key: candidateString(collectionRow?.public_key ?? null) ?? fallbackPublicKey ?? undefined,
       metadata,
       max_supply: maxSupply,
-      current_supply: null,
+      current_supply: Number.isFinite(currentSupply) ? currentSupply : null,
       mint_event_count: Number(stats?.mint_event_count ?? 0),
       minted_nft_count: mintedNfts.length > 0
         ? mintedNfts.length
@@ -656,8 +708,10 @@ export default async function tokenRoutes(app: FastifyInstance) {
     const nftId = `${tokenId}#${nftIndex}`;
     const limit = Math.min(Math.max(Number(request.query.limit) || 20, 1), 100);
     const offset = Math.max(Number(request.query.offset) || 0, 0);
+    const hasTokenCollectionsTable = hasTokenCollections();
+    const hasNftItemsTable = hasNftItems();
 
-    const collectionRow = HAS_TOKEN_COLLECTIONS
+    const collectionRow = hasTokenCollectionsTable
       ? queryOne<{
           token_type: string | null;
           public_key: string | null;
@@ -671,7 +725,7 @@ export default async function tokenRoutes(app: FastifyInstance) {
         )
       : undefined;
 
-    const nftRow = HAS_NFT_ITEMS
+    const nftRow = hasNftItemsTable
       ? queryOne<{ metadata_json: string | null }>(
           `SELECT metadata_json
            FROM nft_items
