@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import Fastify from "fastify";
+import Fastify, { type FastifyRequest } from "fastify";
 import cors from "@fastify/cors";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
@@ -20,6 +20,29 @@ import tokenRoutes from "./routes/tokens.js";
 
 const port = Number(process.env.API_PORT ?? 3001);
 const host = process.env.API_HOST ?? "0.0.0.0";
+const publicApiUrl = process.env.PUBLIC_API_URL?.trim().replace(/\/+$/, "");
+
+function pickHeaderValue(value: string | string[] | undefined): string | undefined {
+  if (!value) return undefined;
+  const first = Array.isArray(value) ? value[0] : value;
+  const normalized = first.split(",")[0]?.trim();
+  return normalized && normalized.length > 0 ? normalized : undefined;
+}
+
+function resolveServerUrl(request: FastifyRequest): string {
+  if (publicApiUrl) return publicApiUrl;
+
+  const protocol =
+    pickHeaderValue(request.headers["x-forwarded-proto"]) ??
+    request.protocol ??
+    "http";
+  const hostHeader =
+    pickHeaderValue(request.headers["x-forwarded-host"]) ??
+    pickHeaderValue(request.headers.host) ??
+    `localhost:${port}`;
+
+  return `${protocol}://${hostHeader}`;
+}
 
 async function main() {
   if (ENV_PATH) {
@@ -48,12 +71,17 @@ async function main() {
         description: "REST API for the Navio blockchain explorer",
         version: "1.0.0",
       },
-      servers: [{ url: `http://localhost:${port}` }],
+      servers: [{ url: publicApiUrl || "/" }],
     },
   });
 
   await app.register(swaggerUi, {
     routePrefix: "/docs",
+    transformSpecification: (swaggerObject, request) => ({
+      ...swaggerObject,
+      servers: [{ url: resolveServerUrl(request) }],
+    }),
+    transformSpecificationClone: true,
   });
 
   // Routes
@@ -95,7 +123,7 @@ async function main() {
   }, async () => ({ status: "ok" }));
 
   await app.listen({ port, host });
-  app.log.info(`Swagger docs available at http://localhost:${port}/docs`);
+  app.log.info(`Swagger docs available at ${publicApiUrl || `http://localhost:${port}`}/docs`);
 }
 
 main().catch((err) => {
