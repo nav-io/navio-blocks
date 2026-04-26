@@ -76,9 +76,11 @@ const PEER_CONNECT_TEST_LIMIT = parseIntegerEnv(
   1,
   100_000
 );
+// Default false: keep peers that fail the reachability probe so the explorer
+// can flag them as non-listening rather than dropping them entirely.
 const PEER_DISCOVERY_FILTER_UNREACHABLE = parseBooleanEnv(
   "PEER_DISCOVERY_FILTER_UNREACHABLE",
-  true
+  false
 );
 const PEER_GEO_LOOKUP_LIMIT = parseIntegerEnv("PEER_GEO_LOOKUP_LIMIT", 80, 0, 2000);
 
@@ -1161,11 +1163,18 @@ export async function updatePeers(
           ? servicesNames.map((v) => toStringSafe(v)).join(",")
           : toStringSafe(servicesNames, toStringSafe(rp.services, ""));
 
+      // For outbound peers our node connected to them, so their advertised
+      // addr is a confirmed listening endpoint. For inbound peers the addr
+      // is the peer's source port (ephemeral), so we can't claim it's
+      // listening — flag them as non-listening instead of always reachable.
+      const inbound = rp.inbound === true;
+      const rpcReachable = !inbound;
+
       const peer: Peer = {
         id: peerId,
         addr,
         subversion: toStringSafe(rp.subver, ""),
-        services: withReachabilityTag(rawServices, true),
+        services: withReachabilityTag(rawServices, rpcReachable),
         country: toStringSafe(geo.country, "") || undefined,
         city: toStringSafe(geo.city, "") || undefined,
         lat: toOptionalNumberSafe(geo.lat),

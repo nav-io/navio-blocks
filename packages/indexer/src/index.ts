@@ -152,7 +152,32 @@ async function main(): Promise<void> {
   }
 
   console.log("[indexer] Initializing database...");
-  const db = initDatabase(DB_PATH);
+  let db: Database.Database;
+  try {
+    db = initDatabase(DB_PATH);
+  } catch (err) {
+    const e = err as { code?: string; message?: string };
+    const msg = e.message ?? String(err);
+    const corrupt =
+      e.code === "SQLITE_CORRUPT" ||
+      /malformed|SQLITE_CORRUPT|database disk image is malformed/i.test(msg);
+    if (corrupt) {
+      console.error(
+        "[indexer] SQLite reports a corrupt database (disk image is malformed)."
+      );
+      console.error("[indexer] File: %s", DB_PATH);
+      console.error(
+        "[indexer] Common causes: unclean shutdown, two indexers on the same file, full disk, or copying an open DB."
+      );
+      console.error(
+        "[indexer] Recovery: stop the API/indexer, back up if needed, then move the DB aside and remove WAL/SHM sidecars, then restart to resync from naviod, e.g.:"
+      );
+      console.error("  mv %s %s.corrupt-backup", DB_PATH, DB_PATH);
+      console.error("  rm -f %s-wal %s-shm", DB_PATH, DB_PATH);
+      process.exit(1);
+    }
+    throw err;
+  }
   const queries = new Queries(db);
 
   // Handle reindex before starting the poller

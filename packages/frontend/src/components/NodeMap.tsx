@@ -9,6 +9,13 @@ interface MapPeer {
   country: string;
   city: string;
   subversion: string;
+  reachable?: boolean;
+}
+
+function reachabilityLabel(reachable: boolean | null | undefined): string {
+  if (reachable === true) return 'Listening';
+  if (reachable === false) return 'Non-listening';
+  return 'Unknown reachability';
 }
 
 interface NodeMapProps {
@@ -75,26 +82,44 @@ export default function NodeMap({ peers }: NodeMapProps) {
           strokeWidth={0.8}
         />
 
-        {/* Peer dots */}
-        {peers.map((peer, i) => {
-          const { x, y } = latLonToSvg(peer.lat, peer.lon);
-          return (
-            <g key={i}>
-              {/* Outer glow */}
-              <circle cx={x} cy={y} r={8} fill="rgba(224, 64, 160, 0.15)" />
-              {/* Dot */}
-              <circle
-                cx={x}
-                cy={y}
-                r={4}
-                className="neon-dot"
-                style={{ cursor: 'pointer' }}
-                onMouseEnter={() => setTooltip({ x, y, peer })}
-                onMouseLeave={() => setTooltip(null)}
-              />
-            </g>
-          );
-        })}
+        {/* Peer dots: render non-listening peers underneath listening ones
+            so confirmed listening nodes pop visually while still showing
+            peers that don't accept inbound connections. */}
+        {peers
+          .slice()
+          .sort((a, b) => Number(a.reachable === true) - Number(b.reachable === true))
+          .map((peer, i) => {
+            const { x, y } = latLonToSvg(peer.lat, peer.lon);
+            const isListening = peer.reachable === true;
+            const isNonListening = peer.reachable === false;
+            const glowFill = isNonListening
+              ? 'rgba(251, 191, 36, 0.10)'
+              : isListening
+                ? 'rgba(224, 64, 160, 0.18)'
+                : 'rgba(180, 180, 200, 0.10)';
+            const dotFill = isNonListening
+              ? '#fbbf24'
+              : isListening
+                ? undefined
+                : '#9ca3af';
+            const dotOpacity = isNonListening ? 0.85 : isListening ? 1 : 0.55;
+            return (
+              <g key={i}>
+                <circle cx={x} cy={y} r={8} fill={glowFill} />
+                <circle
+                  cx={x}
+                  cy={y}
+                  r={isListening ? 4 : 3}
+                  className={isListening ? 'neon-dot' : undefined}
+                  fill={dotFill}
+                  opacity={dotOpacity}
+                  style={{ cursor: 'pointer' }}
+                  onMouseEnter={() => setTooltip({ x, y, peer })}
+                  onMouseLeave={() => setTooltip(null)}
+                />
+              </g>
+            );
+          })}
       </svg>
 
       {/* Tooltip */}
@@ -111,6 +136,17 @@ export default function NodeMap({ peers }: NodeMapProps) {
             {tooltip.peer.city}, {tooltip.peer.country}
           </p>
           <p className="text-white/50">{tooltip.peer.subversion}</p>
+          <p
+            className={
+              tooltip.peer.reachable === true
+                ? 'text-emerald-300'
+                : tooltip.peer.reachable === false
+                  ? 'text-amber-300'
+                  : 'text-white/40'
+            }
+          >
+            {reachabilityLabel(tooltip.peer.reachable)}
+          </p>
         </div>
       )}
     </div>

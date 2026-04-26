@@ -155,12 +155,46 @@ function StakingSection({ staking }: { staking: StakingInfo }) {
 function SkeletonRow() {
   return (
     <tr className="border-b border-white/5">
-      {Array.from({ length: 5 }, (_, i) => (
+      {Array.from({ length: 6 }, (_, i) => (
         <td key={i} className="px-4 py-3">
           <div className="skeleton h-4 rounded w-3/4" />
         </td>
       ))}
     </tr>
+  );
+}
+
+function ReachabilityBadge({ reachable }: { reachable: boolean | null | undefined }) {
+  if (reachable === true) {
+    return (
+      <span
+        className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-300"
+        title="Accepts inbound connections on its advertised port"
+      >
+        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]" />
+        Listening
+      </span>
+    );
+  }
+  if (reachable === false) {
+    return (
+      <span
+        className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-amber-300"
+        title="Connected to a node but does not accept inbound connections"
+      >
+        <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.8)]" />
+        Non-listening
+      </span>
+    );
+  }
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-white/40"
+      title="Reachability not probed yet"
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-white/30" />
+      Unknown
+    </span>
   );
 }
 
@@ -189,9 +223,11 @@ export default function Network() {
       <h1 className="text-3xl font-bold gradient-text">Network</h1>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
         {loading ? (
           <>
+            <div className="glow-card"><div className="skeleton h-12 rounded" /></div>
+            <div className="glow-card"><div className="skeleton h-12 rounded" /></div>
             <div className="glow-card"><div className="skeleton h-12 rounded" /></div>
             <div className="glow-card"><div className="skeleton h-12 rounded" /></div>
             <div className="glow-card"><div className="skeleton h-12 rounded" /></div>
@@ -199,6 +235,8 @@ export default function Network() {
         ) : stats ? (
           <>
             <StatCard label="Total Nodes" value={formatNumber(stats.total_nodes)} />
+            <StatCard label="Listening" value={formatNumber(stats.listening_nodes)} />
+            <StatCard label="Non-listening" value={formatNumber(stats.non_listening_nodes)} />
             <StatCard label="Countries" value={formatNumber(stats.countries.length)} />
             <StatCard label="Most Common Version" value={mostCommonVersion} />
           </>
@@ -275,6 +313,9 @@ export default function Network() {
                   Address
                 </th>
                 <th className="px-4 py-3 text-[10px] uppercase tracking-wider text-white/40 font-medium">
+                  Status
+                </th>
+                <th className="px-4 py-3 text-[10px] uppercase tracking-wider text-white/40 font-medium">
                   Version
                 </th>
                 <th className="px-4 py-3 text-[10px] uppercase tracking-wider text-white/40 font-medium">
@@ -300,6 +341,9 @@ export default function Network() {
                     <td className="px-4 py-3 font-mono text-xs text-white/80">
                       {peer.addr}
                     </td>
+                    <td className="px-4 py-3">
+                      <ReachabilityBadge reachable={peer.reachable} />
+                    </td>
                     <td className="px-4 py-3 font-mono text-xs text-white/60">
                       {peer.subversion}
                     </td>
@@ -316,7 +360,7 @@ export default function Network() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-white/30 text-sm">
+                  <td colSpan={6} className="px-4 py-8 text-center text-white/30 text-sm">
                     No peers found.
                   </td>
                 </tr>

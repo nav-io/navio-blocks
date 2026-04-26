@@ -4,6 +4,20 @@ import { FastifyInstance } from 'fastify';
 import { queryAll } from '../db.js';
 import type { Peer, NodeStats, NodeMapData } from '@navio-blocks/shared';
 
+/**
+ * Read the `reachable=` flag from a peer's services CSV string.
+ * Returns true/false when explicitly set, or undefined when no probe was done.
+ */
+function parseReachableFlag(services: string | null | undefined): boolean | undefined {
+  if (!services) return undefined;
+  const parts = services.split(',').map((p) => p.trim());
+  for (const part of parts) {
+    if (part === 'reachable=1') return true;
+    if (part === 'reachable=0') return false;
+  }
+  return undefined;
+}
+
 const NODE_ADDR_DNS_CACHE_TTL_MS = 10 * 60 * 1000;
 
 interface ParsedEndpoint {
@@ -117,6 +131,8 @@ export default async function nodesRoutes(app: FastifyInstance) {
           type: 'object',
           properties: {
             total_nodes: { type: 'integer' },
+            listening_nodes: { type: 'integer' },
+            non_listening_nodes: { type: 'integer' },
             countries: {
               type: 'array',
               items: {
@@ -152,6 +168,7 @@ export default async function nodesRoutes(app: FastifyInstance) {
                   lon: { type: 'number', nullable: true },
                   last_seen: { type: 'integer' },
                   first_seen: { type: 'integer' },
+                  reachable: { type: 'boolean', nullable: true },
                 },
               },
             },
@@ -170,9 +187,15 @@ export default async function nodesRoutes(app: FastifyInstance) {
        )
        ORDER BY p.last_seen DESC`
     );
-    const peers = await dedupePeersByCanonicalAddress(peersByAddress);
+    const dedupedPeers = await dedupePeersByCanonicalAddress(peersByAddress);
+    const peers: Peer[] = dedupedPeers.map((peer) => ({
+      ...peer,
+      reachable: parseReachableFlag(peer.services),
+    }));
 
     const totalNodes = peers.length;
+    let listeningNodes = 0;
+    let nonListeningNodes = 0;
 
     const countryMap = new Map<string, number>();
     const versionMap = new Map<string, number>();
@@ -183,6 +206,9 @@ export default async function nodesRoutes(app: FastifyInstance) {
 
       const version = peer.subversion || 'Unknown';
       versionMap.set(version, (versionMap.get(version) ?? 0) + 1);
+
+      if (peer.reachable === true) listeningNodes++;
+      else if (peer.reachable === false) nonListeningNodes++;
     }
 
     const countries = Array.from(countryMap.entries())
@@ -195,6 +221,8 @@ export default async function nodesRoutes(app: FastifyInstance) {
 
     return {
       total_nodes: totalNodes,
+      listening_nodes: listeningNodes,
+      non_listening_nodes: nonListeningNodes,
       countries,
       versions,
       peers,
@@ -220,6 +248,7 @@ export default async function nodesRoutes(app: FastifyInstance) {
                   country: { type: 'string' },
                   city: { type: 'string' },
                   subversion: { type: 'string' },
+                  reachable: { type: 'boolean', nullable: true },
                 },
               },
             },
@@ -228,13 +257,21 @@ export default async function nodesRoutes(app: FastifyInstance) {
       },
     },
   }, async (): Promise<NodeMapData> => {
-    const peers = queryAll<{ lat: number; lon: number; country: string; city: string; subversion: string }>(
+    const rows = queryAll<{
+      lat: number;
+      lon: number;
+      country: string;
+      city: string;
+      subversion: string;
+      services: string | null;
+    }>(
       `SELECT
          p.lat,
          p.lon,
          COALESCE(p.country, 'Unknown') AS country,
          COALESCE(p.city, 'Unknown') AS city,
-         p.subversion
+         p.subversion,
+         p.services
        FROM peers p
        WHERE p.rowid IN (
          SELECT MAX(rowid)
@@ -244,6 +281,11 @@ export default async function nodesRoutes(app: FastifyInstance) {
        AND p.lat IS NOT NULL
        AND p.lon IS NOT NULL`,
     );
+
+    const peers = rows.map(({ services, ...rest }) => ({
+      ...rest,
+      reachable: parseReachableFlag(services),
+    }));
 
     return { peers };
   });

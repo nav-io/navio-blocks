@@ -8,39 +8,50 @@
 const fs = require("fs");
 const path = require("path");
 
-const file = path.join(
-  __dirname,
-  "..",
-  "node_modules",
-  "navio-sdk",
-  "dist",
-  "index.js"
-);
-
 const needle = "this.Database = require_lib();";
 const repl = 'this.Database = require("better-sqlite3");';
 
-if (!fs.existsSync(file)) {
-  console.warn(
-    "[patch-navio-sdk] navio-sdk not found, skip:",
-    file
-  );
-  process.exit(0);
+const candidates = [
+  path.join(__dirname, "..", "node_modules", "navio-sdk", "dist", "index.js"),
+  path.join(
+    __dirname,
+    "..",
+    "packages",
+    "indexer",
+    "node_modules",
+    "navio-sdk",
+    "dist",
+    "index.js"
+  ),
+];
+
+function tryPatch(file) {
+  if (!fs.existsSync(file)) return "absent";
+  let s = fs.readFileSync(file, "utf8");
+  if (s.includes(repl)) return "already";
+  if (!s.includes(needle)) return "missing";
+  fs.writeFileSync(file, s.replace(needle, repl));
+  return "patched";
 }
 
-let s = fs.readFileSync(file, "utf8");
-if (s.includes(repl)) {
-  console.log("[patch-navio-sdk] already applied");
-  process.exit(0);
-}
-if (!s.includes(needle)) {
-  console.warn(
-    "[patch-navio-sdk] expected line missing — navio-sdk version may have changed:",
-    needle
-  );
-  process.exit(0);
+let anyPresent = false;
+for (const file of candidates) {
+  const r = tryPatch(file);
+  if (r === "absent") continue;
+  anyPresent = true;
+  if (r === "already") {
+    console.log("[patch-navio-sdk] already applied:", file);
+  } else if (r === "missing") {
+    console.warn(
+      "[patch-navio-sdk] expected line missing — navio-sdk version may have changed:",
+      needle,
+      file
+    );
+  } else {
+    console.log("[patch-navio-sdk] NodeAdapter now uses external better-sqlite3:", file);
+  }
 }
 
-s = s.replace(needle, repl);
-fs.writeFileSync(file, s);
-console.log("[patch-navio-sdk] NodeAdapter now uses external better-sqlite3");
+if (!anyPresent) {
+  console.warn("[patch-navio-sdk] navio-sdk not found under any candidate path; skip");
+}

@@ -173,17 +173,35 @@ export interface Peer {
   lon?: number;
   last_seen: number;
   first_seen: number;
+  /**
+   * Whether the peer accepts inbound TCP connections on its advertised port.
+   * - true: confirmed listening / reachable.
+   * - false: confirmed not listening (e.g. inbound-only / NAT'd peer).
+   * - undefined: not probed (status unknown).
+   */
+  reachable?: boolean;
 }
 
 export interface NodeStats {
   total_nodes: number;
+  /** Peers that accept inbound connections on their advertised port. */
+  listening_nodes: number;
+  /** Peers seen recently but that don't accept inbound connections. */
+  non_listening_nodes: number;
   countries: { country: string; count: number }[];
   versions: { version: string; count: number }[];
   peers: Peer[];
 }
 
 export interface NodeMapData {
-  peers: { lat: number; lon: number; country: string; city: string; subversion: string }[];
+  peers: {
+    lat: number;
+    lon: number;
+    country: string;
+    city: string;
+    subversion: string;
+    reachable?: boolean;
+  }[];
 }
 
 // Price data

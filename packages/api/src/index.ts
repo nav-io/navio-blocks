@@ -7,6 +7,7 @@ import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import fastifyStatic from "@fastify/static";
 import { ENV_PATH } from "./env.js";
+import { initExplorerDb } from "./db.js";
 
 import blocksRoutes from "./routes/blocks.js";
 import transactionsRoutes from "./routes/transactions.js";
@@ -53,6 +54,8 @@ async function main() {
       "[api] No .env file found in current directory or project root; using process env only"
     );
   }
+
+  await initExplorerDb();
 
   const app = Fastify({
     logger: {
