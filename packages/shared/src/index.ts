@@ -333,6 +333,36 @@ export interface NavioBridgeAuditOutgoing {
   amount_sat: string;
 }
 
+/**
+ * Live status of the Navcoin → Navio swap activation block.
+ *
+ * `current_height` and the derived ETA fields are `null` while the upstream
+ * Electrum server is unreachable; callers should fall back to showing the
+ * static `target_height` and surface `error` if present.
+ */
+export interface NavioSwapStatus {
+  /** Navcoin mainnet block at which the swap goes live. */
+  target_height: number;
+  /** Most recent Navcoin tip height observed via Electrum, or null on failure. */
+  current_height: number | null;
+  /** `target_height - current_height`, clamped to 0. Null on failure. */
+  blocks_remaining: number | null;
+  /** Block time used for the ETA estimate (Navcoin targets ~30s). */
+  avg_block_seconds: number;
+  /** Estimated seconds until activation, null on failure. */
+  eta_seconds: number | null;
+  /** Unix-seconds estimate of when activation occurs, null on failure. */
+  eta_timestamp: number | null;
+  /** True once `current_height >= target_height`. */
+  activated: boolean;
+  /** Electrum host the API queried. */
+  electrum_host: string;
+  /** Unix seconds when this snapshot was produced. */
+  as_of: number;
+  /** Reason `current_height` is null, if applicable. */
+  error: string | null;
+}
+
 export type TokenKind = 'token' | 'nft' | 'unknown';
 
 export interface TokenMetadataEntry {

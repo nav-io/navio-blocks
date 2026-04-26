@@ -19,6 +19,7 @@ import priceRoutes from "./routes/price.js";
 import supplyRoutes from "./routes/supply.js";
 import tokenRoutes from "./routes/tokens.js";
 import bridgeRoutes from "./routes/bridge.js";
+import swapRoutes from "./routes/swap.js";
 
 const port = Number(process.env.API_PORT ?? 3001);
 const host = process.env.API_HOST ?? "0.0.0.0";
@@ -99,6 +100,7 @@ async function main() {
   await app.register(supplyRoutes);
   await app.register(tokenRoutes);
   await app.register(bridgeRoutes);
+  await app.register(swapRoutes);
 
   // Serve frontend static build in production
   const __dirname = dirname(fileURLToPath(import.meta.url));

@@ -145,6 +145,13 @@ export function startWnavBurnWatcher(
       amount,
       note,
     });
+    console.log(
+      "[bsc/wnav] Stored burn block=%s tx=%s amount=%s note=%s",
+      log.blockNumber.toString(),
+      log.transactionHash,
+      amount,
+      note
+    );
   }
 
   let stopped = false;
@@ -154,6 +161,17 @@ export function startWnavBurnWatcher(
     "[bsc/wnav] Filtering burns to destination notes starting with %s (network=%s)",
     notePrefix,
     options.network
+  );
+  console.log(
+    "[bsc/wnav] BSC RPC: HTTP=%s WSS=%s (contract=%s)",
+    httpUrl,
+    wssUrl,
+    address
+  );
+  const cursorAtStart = queries.getSyncState(SYNC_KEY_LAST_BLOCK);
+  console.log(
+    "[bsc/wnav] Last scanned block in DB: %s",
+    cursorAtStart ?? "<none — will start at tip - 50k>"
   );
 
   void (async () => {
@@ -237,6 +255,11 @@ async function backfill(
   }
 
   if (from > latest) {
+    console.log(
+      "[bsc/wnav] Cursor (%s) is at/past chain tip (%s); nothing to backfill. To re-scan, rewind 'bsc_wnav_last_scanned_block' in sync_state.",
+      from.toString(),
+      latest.toString()
+    );
     queries.setSyncState(SYNC_KEY_LAST_BLOCK, latest.toString());
     return;
   }

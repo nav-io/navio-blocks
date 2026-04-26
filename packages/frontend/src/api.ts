@@ -125,4 +125,8 @@ export const api = {
     fetchJSON<import('@navio-blocks/shared').PaginatedResponse<import('@navio-blocks/shared').NavioBridgeAuditOutgoing>>(
       `/bridge/audit/outgoing?limit=${limit}&offset=${offset}`
     ),
+
+  // Swap
+  getSwapStatus: () =>
+    fetchJSON<import('@navio-blocks/shared').NavioSwapStatus>('/swap/status'),
 };
