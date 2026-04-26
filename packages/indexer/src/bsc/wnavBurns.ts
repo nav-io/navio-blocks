@@ -246,6 +246,25 @@ export function startWnavBurnWatcher(
       DEFAULT_WNAV_ADDRESS,
     );
   }
+  // One-shot rewind: BSC_WNAV_REWIND_TO=<block> lets you re-scan history (e.g.
+  // after fixing the event signature) without hand-editing sync_state. Cleared
+  // by the user removing the env var on next restart — we don't persist it.
+  const rewindRaw = process.env.BSC_WNAV_REWIND_TO?.trim();
+  if (rewindRaw && /^\d+$/.test(rewindRaw)) {
+    const before = queries.getSyncState(SYNC_KEY_LAST_BLOCK);
+    queries.setSyncState(SYNC_KEY_LAST_BLOCK, rewindRaw);
+    console.log(
+      "[bsc/wnav] BSC_WNAV_REWIND_TO=%s applied (was %s); next backfill will re-scan from there.",
+      rewindRaw,
+      before ?? "<unset>",
+    );
+  } else if (rewindRaw) {
+    console.warn(
+      "[bsc/wnav] Ignoring BSC_WNAV_REWIND_TO=%s — must be a positive integer block number.",
+      rewindRaw,
+    );
+  }
+
   const cursorAtStart = queries.getSyncState(SYNC_KEY_LAST_BLOCK);
   console.log(
     "[bsc/wnav] Last scanned block in DB: %s",
@@ -439,6 +458,8 @@ async function probeContractTopics(
       "RoleGranted(bytes32,address,address)",
     "0xf6391f5c32d9c69d2a47ea670b442974b53935d1edc7fd64eb21e047a839171b":
       "RoleRevoked(bytes32,address,address)",
+    "0xb127fdad471edaf7e0c498b52f590e889813ed697831d285e7af6941f5ee4084":
+      "BurnedWithNote(address,uint256,string) ← wNAV bridge burn",
   };
   const sorted = [...counts.entries()].sort((a, b) => b[1].count - a[1].count);
   for (const [topic0, info] of sorted) {
