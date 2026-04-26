@@ -8,6 +8,7 @@
     "packages/frontend"
   ],
   "scripts": {
+    "postinstall": "node scripts/patch-navio-sdk-external-better-sqlite3.cjs",
     "build:shared": "npm -w packages/shared run build",
     "dev:indexer": "npm -w packages/indexer run dev",
     "dev:api": "npm -w packages/api run dev",

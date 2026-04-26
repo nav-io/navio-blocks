@@ -103,7 +103,7 @@ The API filters stored burns by this prefix so the explorer matches the chain yo
 
 #### BLSCT audit wallet (indexer, optional)
 
-When `NAVIO_AUDIT_KEY` or `AUDIT_KEY` is set, the indexer runs [navio-sdk](https://github.com/nav-io/navio-sdk) `NavioClient` (Electrum + local SQLite wallet DB), derives **outgoing native NAV payouts** from the audited wallet (same approach as the navio-bridge audit UI), and stores a snapshot in the main explorer DB for the API.
+When `NAVIO_AUDIT_KEY` or `AUDIT_KEY` is set, the indexer runs [navio-sdk](https://github.com/nav-io/navio-sdk) `NavioClient` (Electrum + local SQLite wallet DB), derives **outgoing native NAV payouts** from the audited wallet (same approach as the navio-bridge audit UI), and stores a snapshot in the main explorer DB for the API. The indexer loads the SDK’s **CommonJS** build (`require('navio-sdk')`). Because the published SDK **bundles** a copy of `better-sqlite3`, the native addon path would otherwise resolve incorrectly (e.g. under `packages/indexer/`). The repo **`postinstall`** script patches `navio-sdk/dist/index.js` so the wallet adapter uses the hoisted **`better-sqlite3`** dependency from `node_modules` (with a correctly built `better_sqlite3.node`). After `npm install`, ensure the patch logged `[patch-navio-sdk] NodeAdapter now uses external better-sqlite3` (or `already applied`). If the patch fails, upgrade/downgrade `navio-sdk` may have changed the bundle — check `scripts/patch-navio-sdk-external-better-sqlite3.cjs`. On restricted hosts, install build tools so `better-sqlite3` can compile: `python3`, `make`, `g++`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
