@@ -112,7 +112,7 @@ When `NAVIO_AUDIT_KEY` or `AUDIT_KEY` is set, the indexer runs [navio-sdk](https
 | `NAVIO_AUDIT_WALLET_PATH` | next to `DB_PATH` | Path to the SDK’s wallet SQLite file (`navio-audit-wallet.db`) |
 | `NAVIO_AUDIT_RESTORE_HEIGHT` / `AUDIT_RESTORE_HEIGHT` | `0` | `restoreFromHeight` — first block height to scan |
 | `NAVIO_ELECTRUM_HOST` | `testnet.nav.io` / `mainnet.nav.io` | Electrum server host (override per environment) |
-| `NAVIO_ELECTRUM_PORT` | `50002` (TLS) / `50001` (plaintext) | Electrum TCP port; default depends on `NAVIO_ELECTRUM_SSL`. Servers also expose `50005` (ws) and `50004` (wss), not used by the SDK's TCP backend. |
+| `NAVIO_ELECTRUM_PORT` | `50004` (wss) / `50005` (ws) | Electrum WebSocket port; default depends on `NAVIO_ELECTRUM_SSL`. The navio-sdk Electrum client speaks WebSocket, so use `50004`/`50005`, not the raw-TCP ports `50001`/`50002`. |
 | `NAVIO_ELECTRUM_SSL` | `true` | Set `0` / `false` for plaintext |
 | `NAVIO_AUDIT_INTERVAL_MS` | `900000` | Resync interval (ms), minimum 60s |
 

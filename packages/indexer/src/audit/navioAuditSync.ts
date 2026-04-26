@@ -46,9 +46,10 @@ export function resolveNavioAuditConfig(
       ? false
       : true;
 
-  // Electrum servers expose: 50001 tcp, 50002 ssl, 50005 ws, 50004 wss.
-  // The navio-sdk Electrum backend uses raw TCP, so default to 50002/50001.
-  const defaultPort = ssl ? "50002" : "50001";
+  // navio-sdk's ElectrumClient is WebSocket-based (`ws://` / `wss://`).
+  // Servers expose: 50001 tcp, 50002 ssl, 50005 ws, 50004 wss.
+  // We must use the WebSocket ports here.
+  const defaultPort = ssl ? "50004" : "50005";
   const port = parseInt(process.env.NAVIO_ELECTRUM_PORT || defaultPort, 10);
 
   const restoreFromHeight = parseInt(
@@ -65,7 +66,7 @@ export function resolveNavioAuditConfig(
     restoreFromHeight: Number.isNaN(restoreFromHeight) ? 0 : restoreFromHeight,
     electrum: {
       host,
-      port: Number.isNaN(port) ? (ssl ? 50002 : 50001) : port,
+      port: Number.isNaN(port) ? (ssl ? 50004 : 50005) : port,
       ssl,
     },
   };
