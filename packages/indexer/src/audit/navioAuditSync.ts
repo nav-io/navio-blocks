@@ -1,6 +1,14 @@
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import type { NetworkType } from "@navio-blocks/shared";
+import type { NavioClient as NavioClientType } from "navio-sdk";
 import type { Queries } from "../db/queries.js";
+
+/** Use CJS entry so `better-sqlite3` / `fs` load via real `require` (ESM bundle uses a broken `__require` shim). */
+const requireSdk = createRequire(import.meta.url);
+function getNavioClientClass(): typeof NavioClientType {
+  return requireSdk("navio-sdk").NavioClient as typeof NavioClientType;
+}
 
 export interface NavioAuditEnvConfig {
   auditKeyHex: string;
@@ -83,7 +91,7 @@ export async function syncNavioAuditWallet(
     return;
   }
   auditSyncRunning = true;
-  const { NavioClient } = await import("navio-sdk");
+  const NavioClient = getNavioClientClass();
   let client: InstanceType<typeof NavioClient> | null = null;
   try {
     console.log(
