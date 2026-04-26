@@ -1,57 +1,78 @@
 /**
- * navio-sdk's dist/index.js bundles better-sqlite3; the bundled `bindings` helper
- * resolves the .node addon relative to the wrong directory (e.g. packages/indexer).
- * Load the hoisted package instead so the native addon is found.
+ * navio-sdk's bundled `dist/index.{js,mjs}` ships with an inlined copy of
+ * `better-sqlite3` and the `bindings` package. The bundled `bindings()` resolves
+ * the native `.node` addon relative to the wrong directory (e.g.
+ * `packages/indexer/build/better_sqlite3.node`) and aborts with:
  *
- * Idempotent; runs from root `postinstall` after npm installs navio-sdk.
+ *   Could not locate the bindings file. Tried:
+ *    → /…/packages/indexer/build/better_sqlite3.node
+ *    → /…/packages/indexer/build/Release/better_sqlite3.node
+ *    …
+ *
+ * The fix is to make the SDK load the hoisted `better-sqlite3` package via the
+ * real `require`, so `better-sqlite3` resolves its addon from its own
+ * `node_modules/better-sqlite3/build/Release/better_sqlite3.node`.
+ *
+ * Idempotent. Runs from root `postinstall` AND from the indexer's prestart/dev
+ * scripts, so it works even if `npm ci --ignore-scripts` was used on prod.
  */
 const fs = require("fs");
 const path = require("path");
 
-const needle = "this.Database = require_lib();";
-const repl = 'this.Database = require("better-sqlite3");';
+const NEEDLE = "this.Database = require_lib();";
+const REPL = 'this.Database = require("better-sqlite3");';
 
-const candidates = [
-  path.join(__dirname, "..", "node_modules", "navio-sdk", "dist", "index.js"),
-  path.join(
-    __dirname,
-    "..",
-    "packages",
-    "indexer",
-    "node_modules",
-    "navio-sdk",
-    "dist",
-    "index.js"
-  ),
-];
+function repoRoot() {
+  return path.resolve(__dirname, "..");
+}
+
+function candidateFiles() {
+  const roots = [
+    path.join(repoRoot(), "node_modules", "navio-sdk"),
+    path.join(repoRoot(), "packages", "indexer", "node_modules", "navio-sdk"),
+  ];
+  const files = [];
+  for (const r of roots) {
+    files.push(path.join(r, "dist", "index.js"));
+    files.push(path.join(r, "dist", "index.mjs"));
+  }
+  return files;
+}
 
 function tryPatch(file) {
   if (!fs.existsSync(file)) return "absent";
-  let s = fs.readFileSync(file, "utf8");
-  if (s.includes(repl)) return "already";
-  if (!s.includes(needle)) return "missing";
-  fs.writeFileSync(file, s.replace(needle, repl));
+  const s = fs.readFileSync(file, "utf8");
+  if (!s.includes(NEEDLE)) {
+    return s.includes(REPL) ? "already" : "missing";
+  }
+  fs.writeFileSync(file, s.split(NEEDLE).join(REPL));
   return "patched";
 }
 
 let anyPresent = false;
-for (const file of candidates) {
+let anyChanged = false;
+for (const file of candidateFiles()) {
   const r = tryPatch(file);
   if (r === "absent") continue;
   anyPresent = true;
-  if (r === "already") {
-    console.log("[patch-navio-sdk] already applied:", file);
+  if (r === "patched") {
+    anyChanged = true;
+    console.log("[patch-navio-sdk] NodeAdapter now uses external better-sqlite3:", file);
+  } else if (r === "already") {
+    // Quiet on already-applied to keep prestart logs clean.
   } else if (r === "missing") {
     console.warn(
-      "[patch-navio-sdk] expected line missing — navio-sdk version may have changed:",
-      needle,
+      "[patch-navio-sdk] expected line missing — navio-sdk bundle may have changed:",
+      NEEDLE,
       file
     );
-  } else {
-    console.log("[patch-navio-sdk] NodeAdapter now uses external better-sqlite3:", file);
   }
 }
 
 if (!anyPresent) {
   console.warn("[patch-navio-sdk] navio-sdk not found under any candidate path; skip");
+}
+
+if (anyChanged) {
+  console.log("[patch-navio-sdk] done");
 }
