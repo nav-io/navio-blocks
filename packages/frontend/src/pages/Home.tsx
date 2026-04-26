@@ -7,7 +7,6 @@ import { SearchBar } from '../components/SearchBar';
 import StatCard from '../components/StatCard';
 import GlowCard from '../components/GlowCard';
 import PriceChart from '../components/PriceChart';
-import SwapCountdown from '../components/SwapCountdown';
 import type { Block, LatestOutput, ChartPoint } from '@navio-blocks/shared';
 
 const METRIC_PERIODS = ['24h', '7d', '30d', 'all'] as const;
@@ -228,11 +227,6 @@ export default function Home() {
           navio block explorer
         </h1>
         <SearchBar className="max-w-2xl mx-auto" />
-      </section>
-
-      {/* Swap activation countdown */}
-      <section className="max-w-6xl mx-auto px-4 pb-2">
-        <SwapCountdown />
       </section>
 
       {/* Stats */}
