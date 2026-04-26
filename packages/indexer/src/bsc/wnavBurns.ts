@@ -7,7 +7,7 @@ import {
   type AbiEvent,
   type Log,
 } from "viem";
-import { bsc } from "viem/chains";
+import { bsc, bscTestnet } from "viem/chains";
 import { type NetworkType, wnavBridgeNotePrefix } from "@navio-blocks/shared";
 import type { Queries } from "../db/queries.js";
 
@@ -38,6 +38,21 @@ function envInt(name: string, fallback: number): number {
 function envBool(name: string): boolean {
   const raw = process.env[name]?.trim().toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes";
+}
+
+/**
+ * Pick BSC mainnet vs testnet. Defaults to BSC mainnet because navio's wNAV
+ * bridge contract lives on BSC mainnet for both navio mainnet (`nav1` notes)
+ * and navio testnet (`tnv1` notes). Override with `BSC_CHAIN=testnet` only if
+ * you really have a separate wNAV deployment on BSC testnet.
+ */
+function resolveBscChain(_network: NetworkType) {
+  const explicit = process.env.BSC_CHAIN?.trim().toLowerCase();
+  const isTestnet =
+    explicit === "testnet" ||
+    explicit === "bsctestnet" ||
+    explicit === "bsc_testnet";
+  return isTestnet ? bscTestnet : bsc;
 }
 
 function isWnavToNavioNote(note: string | null, expectedPrefix: string): boolean {
@@ -92,18 +107,25 @@ export function startWnavBurnWatcher(
   const abi = burnAbi(event);
   const eventName = event.name;
 
-  const wssUrl =
-    process.env.BSC_WSS_URL?.trim() || "wss://bsc-rpc.publicnode.com";
-  const httpUrl =
-    process.env.BSC_HTTP_URL?.trim() || "https://bsc-rpc.publicnode.com";
+  const chain = resolveBscChain(options.network);
+  const isBscTestnet = chain.id === bscTestnet.id;
+  const defaultHttp = isBscTestnet
+    ? "https://bsc-testnet-rpc.publicnode.com"
+    : "https://bsc-rpc.publicnode.com";
+  const defaultWss = isBscTestnet
+    ? "wss://bsc-testnet-rpc.publicnode.com"
+    : "wss://bsc-rpc.publicnode.com";
+
+  const wssUrl = process.env.BSC_WSS_URL?.trim() || defaultWss;
+  const httpUrl = process.env.BSC_HTTP_URL?.trim() || defaultHttp;
 
   const httpClient = createPublicClient({
-    chain: bsc,
+    chain,
     transport: http(httpUrl),
   });
 
   const wsClient = createPublicClient({
-    chain: bsc,
+    chain,
     transport: webSocket(wssUrl),
   });
 
@@ -200,11 +222,25 @@ export function startWnavBurnWatcher(
     options.network
   );
   console.log(
+    "[bsc/wnav] BSC chain: %s (id=%d)%s",
+    chain.name,
+    chain.id,
+    isBscTestnet ? " — testnet" : "",
+  );
+  console.log(
     "[bsc/wnav] BSC RPC: HTTP=%s WSS=%s (contract=%s)",
     httpUrl,
     wssUrl,
     address
   );
+  if (!process.env.BSC_WNAV_ADDRESS && isBscTestnet) {
+    console.warn(
+      "[bsc/wnav] WARNING: BSC chain is testnet but BSC_WNAV_ADDRESS is not set; " +
+        "the default contract %s is the BSC mainnet wNAV deployment and will not " +
+        "exist on BSC testnet. Set BSC_WNAV_ADDRESS to the testnet wNAV contract.",
+      DEFAULT_WNAV_ADDRESS,
+    );
+  }
   const cursorAtStart = queries.getSyncState(SYNC_KEY_LAST_BLOCK);
   console.log(
     "[bsc/wnav] Last scanned block in DB: %s",
@@ -216,6 +252,18 @@ export function startWnavBurnWatcher(
     heartbeatIntervalMs,
     debug ? "on" : "off",
   );
+
+  // One-shot diagnostic: list every topic0 the contract emits over the last N
+  // blocks. If the user's burn isn't being indexed, the topic0 of the actual
+  // burn event will appear here and they can set BSC_WNAV_EVENT to match.
+  if (debug) {
+    void probeContractTopics(httpClient, address).catch((err) => {
+      console.warn(
+        "[bsc/wnav][probe] failed:",
+        err instanceof Error ? err.message : err,
+      );
+    });
+  }
 
   async function runBackfill(verbose: boolean): Promise<void> {
     if (pollRunning || stopped) return;
@@ -324,6 +372,85 @@ export function startWnavBurnWatcher(
       unwatch = undefined;
     },
   };
+}
+
+/**
+ * Diagnostic: fetch every log emitted by the contract over the recent
+ * ~`PROBE_BLOCK_RANGE` blocks and print the unique topic0 hashes with counts.
+ * Lets us identify the actual burn event signature when the configured one
+ * doesn't match (BscScan calls the function "Burn With Note" but the emitted
+ * event name/casing is what we filter on).
+ */
+const PROBE_BLOCK_RANGE = 10_000n;
+async function probeContractTopics(
+  httpClient: ReturnType<typeof createPublicClient>,
+  address: `0x${string}`,
+): Promise<void> {
+  const tip = await httpClient.getBlockNumber();
+  const fromBlock = tip > PROBE_BLOCK_RANGE ? tip - PROBE_BLOCK_RANGE : 0n;
+  console.log(
+    "[bsc/wnav][probe] Scanning %s for ALL log topics in blocks %s..%s",
+    address,
+    fromBlock.toString(),
+    tip.toString(),
+  );
+  const logs = await httpClient.getLogs({
+    address,
+    fromBlock,
+    toBlock: tip,
+  });
+  if (logs.length === 0) {
+    console.log("[bsc/wnav][probe] No logs found on contract in this range.");
+    return;
+  }
+  const counts = new Map<string, { count: number; sampleTx: string; indexedArgs: number }>();
+  for (const log of logs) {
+    const t0 = (log.topics[0] ?? "<no-topic0>") as string;
+    const indexedArgs = Math.max(0, log.topics.length - 1);
+    const entry = counts.get(t0) ?? {
+      count: 0,
+      sampleTx: log.transactionHash ?? "?",
+      indexedArgs,
+    };
+    entry.count += 1;
+    counts.set(t0, entry);
+  }
+  console.log(
+    "[bsc/wnav][probe] %d log(s) across %d distinct event signature(s):",
+    logs.length,
+    counts.size,
+  );
+  // Standard ERC-20 event signatures we can label without a lookup.
+  const KNOWN: Record<string, string> = {
+    "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef":
+      "Transfer(address,address,uint256)",
+    "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925":
+      "Approval(address,address,uint256)",
+    "0xbc7cd75a20ee27fd9adebab32041f755214dbc6bffa90cc0225b39da2e5c2d3b":
+      "AdminChanged (proxy)",
+    "0x7e644d79422f17c01e4894b5f4f588d331ebfa28653d42ae832dc59e38c9798f":
+      "AdminChanged (legacy proxy)",
+    "0x2f8788117e7eff1d82e926ec794901d17c78024a50270940304540a733656f0d":
+      "RoleGranted(bytes32,address,address)",
+    "0xf6391f5c32d9c69d2a47ea670b442974b53935d1edc7fd64eb21e047a839171b":
+      "RoleRevoked(bytes32,address,address)",
+  };
+  const sorted = [...counts.entries()].sort((a, b) => b[1].count - a[1].count);
+  for (const [topic0, info] of sorted) {
+    const label = KNOWN[topic0] ?? "<unknown — likely your burn event>";
+    console.log(
+      "[bsc/wnav][probe]   topic0=%s indexed=%d count=%d sample_tx=%s  %s",
+      topic0,
+      info.indexedArgs,
+      info.count,
+      info.sampleTx,
+      label,
+    );
+  }
+  console.log(
+    "[bsc/wnav][probe] If your burn event is the <unknown> one above, set BSC_WNAV_EVENT to its full Solidity signature, e.g.:\n" +
+      "  BSC_WNAV_EVENT='event BurnedWithNote(address indexed from, uint256 amount, string note)'",
+  );
 }
 
 async function backfill(
