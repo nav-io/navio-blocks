@@ -26,13 +26,18 @@ const MAX_LOG_RANGE = 49_999n;
 /** Default cadence for the HTTP poll that backstops the WSS subscription. */
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
 /** Heartbeat log cadence so an idle watcher still reports liveness. */
-const DEFAULT_HEARTBEAT_INTERVAL_MS = 10 * 60_000;
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 60_000;
 
 function envInt(name: string, fallback: number): number {
   const raw = process.env[name];
   if (!raw) return fallback;
   const n = parseInt(raw, 10);
   return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function envBool(name: string): boolean {
+  const raw = process.env[name]?.trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
 }
 
 function isWnavToNavioNote(note: string | null, expectedPrefix: string): boolean {
@@ -187,6 +192,7 @@ export function startWnavBurnWatcher(
     "BSC_WNAV_HEARTBEAT_INTERVAL_MS",
     DEFAULT_HEARTBEAT_INTERVAL_MS,
   );
+  const debug = envBool("BSC_WNAV_DEBUG");
 
   console.log(
     "[bsc/wnav] Filtering burns to destination notes starting with %s (network=%s)",
@@ -205,16 +211,26 @@ export function startWnavBurnWatcher(
     cursorAtStart ?? "<none — will start at tip - 50k>"
   );
   console.log(
-    "[bsc/wnav] HTTP poll interval=%dms heartbeat=%dms",
+    "[bsc/wnav] HTTP poll interval=%dms heartbeat=%dms debug=%s",
     pollIntervalMs,
     heartbeatIntervalMs,
+    debug ? "on" : "off",
   );
 
   async function runBackfill(verbose: boolean): Promise<void> {
     if (pollRunning || stopped) return;
     pollRunning = true;
     try {
-      await backfill(httpClient, queries, address, eventName, abi, persistLog, verbose);
+      await backfill(
+        httpClient,
+        queries,
+        address,
+        eventName,
+        abi,
+        persistLog,
+        verbose,
+        debug,
+      );
     } catch (err) {
       console.error(
         "[bsc/wnav] Backfill error:",
@@ -272,12 +288,28 @@ export function startWnavBurnWatcher(
       void runBackfill(false);
     }, pollIntervalMs);
     heartbeatTimer = setInterval(() => {
-      const cursor = queries.getSyncState(SYNC_KEY_LAST_BLOCK);
-      console.log(
-        "[bsc/wnav] Watcher alive (cursor=%s, prefix=%s)",
-        cursor ?? "<none>",
-        notePrefix,
-      );
+      void (async () => {
+        const cursorRaw = queries.getSyncState(SYNC_KEY_LAST_BLOCK);
+        let tipStr = "?";
+        let lagStr = "?";
+        try {
+          const tip = await httpClient.getBlockNumber();
+          tipStr = tip.toString();
+          if (cursorRaw && /^\d+$/.test(cursorRaw)) {
+            const lag = tip - BigInt(cursorRaw);
+            lagStr = lag >= 0n ? lag.toString() : "0";
+          }
+        } catch (e) {
+          tipStr = `err:${e instanceof Error ? e.message : String(e)}`;
+        }
+        console.log(
+          "[bsc/wnav] Watcher alive cursor=%s tip=%s lag=%s prefix=%s",
+          cursorRaw ?? "<none>",
+          tipStr,
+          lagStr,
+          notePrefix,
+        );
+      })();
     }, heartbeatIntervalMs);
   })();
 
@@ -307,6 +339,7 @@ async function backfill(
     args?: Record<string, unknown> | readonly unknown[];
   }) => Promise<void>,
   verbose: boolean,
+  debug: boolean,
 ): Promise<void> {
   const latest = await httpClient.getBlockNumber();
   const stored = queries.getSyncState(SYNC_KEY_LAST_BLOCK);
@@ -336,6 +369,13 @@ async function backfill(
       eventName,
       from.toString(),
       latest.toString()
+    );
+  } else if (debug) {
+    console.log(
+      "[bsc/wnav] Poll: scanning %s..%s (%s blocks)",
+      from.toString(),
+      latest.toString(),
+      (latest - from + 1n).toString(),
     );
   }
 
