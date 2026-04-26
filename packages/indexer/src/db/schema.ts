@@ -165,6 +165,23 @@ export function initDatabase(dbPath: string): Database.Database {
     );
 
     CREATE INDEX IF NOT EXISTS idx_bsc_wnav_burns_timestamp ON bsc_wnav_burns(timestamp DESC);
+
+    CREATE TABLE IF NOT EXISTS navio_audit_outgoing (
+      spend_tx_hash TEXT PRIMARY KEY NOT NULL,
+      block_height INTEGER NOT NULL,
+      amount_sat TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_navio_audit_outgoing_block ON navio_audit_outgoing(block_height DESC);
+
+    CREATE TABLE IF NOT EXISTS navio_audit_meta (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      balance_sat TEXT NOT NULL DEFAULT '0',
+      synced_height INTEGER NOT NULL DEFAULT 0,
+      chain_tip INTEGER NOT NULL DEFAULT 0,
+      error_message TEXT,
+      updated_at INTEGER NOT NULL DEFAULT 0
+    );
   `);
 
   // Lightweight migrations for existing DBs.

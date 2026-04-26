@@ -113,4 +113,16 @@ export const api = {
     fetchJSON<import('@navio-blocks/shared').PaginatedResponse<import('@navio-blocks/shared').WrappedNavcoinBurn>>(
       `/bridge/burns?limit=${limit}&offset=${offset}`
     ),
+
+  getBridgeAuditSummary: () =>
+    fetchJSON<{
+      indexed: boolean;
+      summary: import('@navio-blocks/shared').NavioBridgeAuditSummary | null;
+      total_outgoing_sat: string;
+    }>('/bridge/audit/summary'),
+
+  getBridgeAuditOutgoing: (limit = 50, offset = 0) =>
+    fetchJSON<import('@navio-blocks/shared').PaginatedResponse<import('@navio-blocks/shared').NavioBridgeAuditOutgoing>>(
+      `/bridge/audit/outgoing?limit=${limit}&offset=${offset}`
+    ),
 };

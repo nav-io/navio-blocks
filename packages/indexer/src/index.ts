@@ -11,6 +11,10 @@ import { Poller } from "./sync/poller.js";
 import { updatePeers } from "./sync/peers.js";
 import { updatePrice } from "./sync/price.js";
 import { startWnavBurnWatcher, type WnavBurnWatcher } from "./bsc/wnavBurns.js";
+import {
+  resolveNavioAuditConfig,
+  syncNavioAuditWallet,
+} from "./audit/navioAuditSync.js";
 
 const FILE_DIR = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(FILE_DIR, "../../../");
@@ -226,6 +230,28 @@ async function main(): Promise<void> {
     console.log("[indexer]   BSC wNAV burns:  disabled (BSC_WNAV_ENABLED=0)");
   }
 
+  const navioAuditConfig = resolveNavioAuditConfig(network, DB_PATH);
+  let auditTimer: ReturnType<typeof setInterval> | undefined;
+  const auditIntervalMs = Math.max(
+    60_000,
+    parseInt(process.env.NAVIO_AUDIT_INTERVAL_MS ?? "900000", 10) || 900000
+  );
+  if (navioAuditConfig) {
+    console.log(
+      "[indexer]   Navio audit wallet: enabled (interval %dms)",
+      auditIntervalMs
+    );
+    void syncNavioAuditWallet(queries, navioAuditConfig);
+    auditTimer = setInterval(
+      () => void syncNavioAuditWallet(queries, navioAuditConfig),
+      auditIntervalMs
+    );
+  } else {
+    console.log(
+      "[indexer]   Navio audit wallet: disabled (set NAVIO_AUDIT_KEY or AUDIT_KEY)"
+    );
+  }
+
   console.log("[indexer] Started");
   console.log("[indexer]   Block polling:  every %dms", POLL_INTERVAL);
   console.log("[indexer]   Peer updates:   every %dms", PEER_INTERVAL);
@@ -239,6 +265,7 @@ async function main(): Promise<void> {
     poller.stop();
     clearInterval(peerTimer);
     clearInterval(priceTimer);
+    if (auditTimer) clearInterval(auditTimer);
     db.close();
     console.log("[indexer] Goodbye");
     process.exit(0);

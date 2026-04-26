@@ -297,6 +297,23 @@ export interface WrappedNavcoinBurn {
   from_address?: string | null;
 }
 
+/** Snapshot of the bridge BLSCT audit wallet (navio-sdk + Electrum), stored when the indexer has `NAVIO_AUDIT_KEY` / `AUDIT_KEY` set. Amounts are NAV satoshis. */
+export interface NavioBridgeAuditSummary {
+  balance_sat: string;
+  synced_height: number;
+  chain_tip: number;
+  error_message: string | null;
+  /** Unix seconds */
+  updated_at: number;
+}
+
+/** One outgoing native-NAV payout from the audited wallet (`spend_tx_hash` is the transaction that spent inputs). */
+export interface NavioBridgeAuditOutgoing {
+  spend_tx_hash: string;
+  block_height: number;
+  amount_sat: string;
+}
+
 export type TokenKind = 'token' | 'nft' | 'unknown';
 
 export interface TokenMetadataEntry {

@@ -20,6 +20,20 @@ export interface BscWnavBurnInsert {
   note: string | null;
 }
 
+export interface NavioAuditOutgoingRow {
+  spend_tx_hash: string;
+  block_height: number;
+  amount_sat: string;
+}
+
+export interface NavioAuditMetaRow {
+  balance_sat: string;
+  synced_height: number;
+  chain_tip: number;
+  error_message: string | null;
+  updated_at: number;
+}
+
 export class Queries {
   private stmtInsertBlock;
   private stmtInsertTx;
@@ -53,6 +67,12 @@ export class Queries {
   private stmtGetSyncState;
   private stmtSetSyncState;
   private stmtInsertBscWnavBurn;
+  private stmtDeleteAllNavioAuditOutgoing;
+  private stmtInsertNavioAuditOutgoing;
+  private stmtUpsertNavioAuditMeta;
+  private stmtGetNavioAuditMeta;
+  private stmtListNavioAuditOutgoing;
+  private stmtCountNavioAuditOutgoing;
 
   constructor(private db: Database.Database) {
     this.stmtInsertBlock = db.prepare(`
@@ -219,6 +239,37 @@ export class Queries {
         (@tx_hash, @log_index, @block_number, @timestamp, @from_address, @amount, @note)
     `);
 
+    this.stmtDeleteAllNavioAuditOutgoing = db.prepare(
+      `DELETE FROM navio_audit_outgoing`
+    );
+
+    this.stmtInsertNavioAuditOutgoing = db.prepare(`
+      INSERT INTO navio_audit_outgoing (spend_tx_hash, block_height, amount_sat)
+      VALUES (@spend_tx_hash, @block_height, @amount_sat)
+    `);
+
+    this.stmtUpsertNavioAuditMeta = db.prepare(`
+      INSERT OR REPLACE INTO navio_audit_meta
+        (id, balance_sat, synced_height, chain_tip, error_message, updated_at)
+      VALUES
+        (1, @balance_sat, @synced_height, @chain_tip, @error_message, @updated_at)
+    `);
+
+    this.stmtGetNavioAuditMeta = db.prepare(
+      `SELECT balance_sat, synced_height, chain_tip, error_message, updated_at FROM navio_audit_meta WHERE id = 1`
+    );
+
+    this.stmtListNavioAuditOutgoing = db.prepare(`
+      SELECT spend_tx_hash, block_height, amount_sat
+      FROM navio_audit_outgoing
+      ORDER BY block_height DESC, spend_tx_hash DESC
+      LIMIT ? OFFSET ?
+    `);
+
+    this.stmtCountNavioAuditOutgoing = db.prepare(
+      `SELECT COUNT(*) AS count FROM navio_audit_outgoing`
+    );
+
     this.stmtGetBlockSupply = db.prepare(
       `SELECT * FROM block_supply WHERE height = ?`
     );
@@ -340,6 +391,55 @@ export class Queries {
       amount: row.amount,
       note: row.note,
     });
+  }
+
+  getNavioAuditMeta(): NavioAuditMetaRow | null {
+    const row = this.stmtGetNavioAuditMeta.get() as
+      | NavioAuditMetaRow
+      | undefined;
+    return row ?? null;
+  }
+
+  replaceNavioAuditData(meta: NavioAuditMetaRow, outgoing: NavioAuditOutgoingRow[]): void {
+    const run = this.db.transaction((m: NavioAuditMetaRow, rows: NavioAuditOutgoingRow[]) => {
+      this.stmtDeleteAllNavioAuditOutgoing.run();
+      for (const r of rows) {
+        this.stmtInsertNavioAuditOutgoing.run({
+          spend_tx_hash: r.spend_tx_hash,
+          block_height: r.block_height,
+          amount_sat: r.amount_sat,
+        });
+      }
+      this.stmtUpsertNavioAuditMeta.run({
+        balance_sat: m.balance_sat,
+        synced_height: m.synced_height,
+        chain_tip: m.chain_tip,
+        error_message: m.error_message,
+        updated_at: m.updated_at,
+      });
+    });
+    run(meta, outgoing);
+  }
+
+  recordNavioAuditFailure(message: string): void {
+    const now = Math.floor(Date.now() / 1000);
+    const cur = this.getNavioAuditMeta();
+    this.stmtUpsertNavioAuditMeta.run({
+      balance_sat: cur?.balance_sat ?? "0",
+      synced_height: cur?.synced_height ?? 0,
+      chain_tip: cur?.chain_tip ?? 0,
+      error_message: message,
+      updated_at: now,
+    });
+  }
+
+  listNavioAuditOutgoing(limit: number, offset: number): NavioAuditOutgoingRow[] {
+    return this.stmtListNavioAuditOutgoing.all(limit, offset) as NavioAuditOutgoingRow[];
+  }
+
+  countNavioAuditOutgoing(): number {
+    const row = this.stmtCountNavioAuditOutgoing.get() as { count: number };
+    return row?.count ?? 0;
   }
 
   getBlockByHeight(height: number): Block | undefined {

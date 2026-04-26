@@ -2,6 +2,8 @@ import { FastifyInstance } from 'fastify';
 import { queryAll, queryOne, queryScalar } from '../db.js';
 import type {
   NetworkType,
+  NavioBridgeAuditOutgoing,
+  NavioBridgeAuditSummary,
   PaginatedResponse,
   WrappedNavcoinBurn,
 } from '@navio-blocks/shared';
@@ -12,6 +14,20 @@ function burnsTableReady(): boolean {
     `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'bsc_wnav_burns'`
   );
   return row !== undefined;
+}
+
+function auditTablesReady(): boolean {
+  const row = queryOne<{ name: string }>(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'navio_audit_meta'`
+  );
+  return row !== undefined;
+}
+
+interface BridgeAuditSummaryResponse {
+  indexed: boolean;
+  summary: NavioBridgeAuditSummary | null;
+  /** Sum of outgoing payout amounts (NAV sats), decimal string. */
+  total_outgoing_sat: string;
 }
 
 export default async function bridgeRoutes(app: FastifyInstance) {
@@ -102,5 +118,75 @@ export default async function bridgeRoutes(app: FastifyInstance) {
       limit,
       offset,
     };
+  });
+
+  app.get('/api/bridge/audit/summary', {
+    schema: {
+      tags: ['Bridge'],
+      summary: 'BLSCT audit wallet snapshot (indexed payouts)',
+      description:
+        'Summary from the explorer’s navio-sdk Electrum sync when `NAVIO_AUDIT_KEY` / `AUDIT_KEY` is configured on the indexer.',
+      response: { 200: { type: 'object', additionalProperties: true } },
+    },
+  }, async (): Promise<BridgeAuditSummaryResponse> => {
+    if (!auditTablesReady()) {
+      return { indexed: false, summary: null, total_outgoing_sat: '0' };
+    }
+    const meta = queryOne<NavioBridgeAuditSummary>(
+      `SELECT balance_sat, synced_height, chain_tip, error_message, updated_at FROM navio_audit_meta WHERE id = 1`
+    );
+    if (!meta || meta.updated_at === 0) {
+      return { indexed: false, summary: meta ?? null, total_outgoing_sat: '0' };
+    }
+    const amounts = queryAll<{ amount_sat: string }>(
+      `SELECT amount_sat FROM navio_audit_outgoing`
+    );
+    const totalOutgoing = amounts
+      .reduce((a, r) => a + BigInt(r.amount_sat), 0n)
+      .toString();
+    return {
+      indexed: true,
+      summary: meta,
+      total_outgoing_sat: totalOutgoing,
+    };
+  });
+
+  app.get<{
+    Querystring: { limit?: number; offset?: number };
+  }>('/api/bridge/audit/outgoing', {
+    schema: {
+      tags: ['Bridge'],
+      summary: 'Outgoing NAV payouts from the audited bridge wallet',
+      querystring: {
+        type: 'object',
+        properties: {
+          limit: { type: 'integer', minimum: 1, maximum: 500, default: 50 },
+          offset: { type: 'integer', minimum: 0, default: 0 },
+        },
+      },
+      response: { 200: { type: 'object', additionalProperties: true } },
+    },
+  }, async (request): Promise<PaginatedResponse<NavioBridgeAuditOutgoing>> => {
+    const limit = request.query.limit ?? 50;
+    const offset = request.query.offset ?? 0;
+
+    if (!auditTablesReady()) {
+      return { data: [], total: 0, limit, offset };
+    }
+
+    const total = queryScalar<number>(
+      `SELECT COUNT(*) FROM navio_audit_outgoing`
+    );
+
+    const rows = queryAll<NavioBridgeAuditOutgoing>(
+      `SELECT spend_tx_hash, block_height, amount_sat
+       FROM navio_audit_outgoing
+       ORDER BY block_height DESC, spend_tx_hash DESC
+       LIMIT ? OFFSET ?`,
+      limit,
+      offset,
+    );
+
+    return { data: rows, total, limit, offset };
   });
 }
