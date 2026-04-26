@@ -17,8 +17,13 @@ const SYNC_KEY_LAST_BLOCK = "bsc_wnav_last_scanned_block";
 const DEFAULT_WNAV_ADDRESS =
   "0xBFEf6cCFC830D3BaCA4F6766a0d4AaA242Ca9F3D" as const;
 
+// Verified on BSC mainnet (topic0
+// 0xb127fdad471edaf7e0c498b52f590e889813ed697831d285e7af6941f5ee4084).
+// Solidity convention is PascalCase event names; an earlier copy of this file
+// had `burnedWithNote` (lowercase) which produces a different keccak256 and
+// silently matches zero logs.
 const DEFAULT_EVENT =
-  "event burnedWithNote(address indexed from, uint256 amount, string note)";
+  "event BurnedWithNote(address indexed from, uint256 amount, string note)";
 
 /** PublicNode and similar providers cap `eth_getLogs` block span (often 50k). */
 const MAX_LOG_RANGE = 49_999n;
@@ -89,7 +94,7 @@ export interface WnavBurnWatcherOptions {
 }
 
 /**
- * Index `burnedWithNote` logs from the wNAV BEP-20 contract on BSC.
+ * Index `BurnedWithNote` logs from the wNAV BEP-20 contract on BSC.
  * Only persists burns whose `note` starts with the Navio Bech32 prefix for this deployment
  * (`nav1` mainnet, `tnv1` testnet by default; override with `BSC_WNAV_NOTE_PREFIX`).
  * Uses HTTP for historical chunks (50k max) and WebSocket for live logs.
@@ -552,7 +557,7 @@ async function backfill(
   queries.setSyncState(SYNC_KEY_LAST_BLOCK, latest.toString());
   if (verbose || logsSeen > 0) {
     console.log(
-      "[bsc/wnav] Backfill complete through block %s (%d burnedWithNote logs scanned)",
+      "[bsc/wnav] Backfill complete through block %s (%d BurnedWithNote logs scanned)",
       latest.toString(),
       logsSeen,
     );
