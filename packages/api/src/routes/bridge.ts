@@ -1,6 +1,11 @@
 import { FastifyInstance } from 'fastify';
 import { queryAll, queryOne, queryScalar } from '../db.js';
-import type { PaginatedResponse, WrappedNavcoinBurn } from '@navio-blocks/shared';
+import type {
+  NetworkType,
+  PaginatedResponse,
+  WrappedNavcoinBurn,
+} from '@navio-blocks/shared';
+import { wnavBridgeNotePrefix } from '@navio-blocks/shared';
 
 function burnsTableReady(): boolean {
   const row = queryOne<{ name: string }>(
@@ -17,7 +22,7 @@ export default async function bridgeRoutes(app: FastifyInstance) {
       tags: ['Bridge'],
       summary: 'wNAV (BSC) burn history',
       description:
-        'wNAV → Navio bridge burns on BSC: `burnedWithNote` events whose `note` starts with `nav1` (indexed by navio-blocks)',
+        'wNAV → Navio bridge burns on BSC: `burnedWithNote` events whose `note` matches the explorer network prefix (`nav1` mainnet, `tnv1` testnet by default; set `NETWORK` / `BSC_WNAV_NOTE_PREFIX`)',
       querystring: {
         type: 'object',
         properties: {
@@ -58,11 +63,14 @@ export default async function bridgeRoutes(app: FastifyInstance) {
       return { data: [], total: 0, limit, offset };
     }
 
-    const nav1Clause =
-      `WHERE LOWER(TRIM(note)) LIKE 'nav1%'`;
+    const network = (process.env.NETWORK ?? 'mainnet') as NetworkType;
+    const notePrefix = wnavBridgeNotePrefix(network, process.env.BSC_WNAV_NOTE_PREFIX);
+    const noteClause = `WHERE LOWER(TRIM(note)) LIKE ?`;
+    const likeParam = `${notePrefix}%`;
 
     const total = queryScalar<number>(
-      `SELECT COUNT(*) FROM bsc_wnav_burns ${nav1Clause}`,
+      `SELECT COUNT(*) FROM bsc_wnav_burns ${noteClause}`,
+      likeParam,
     );
 
     const rows = queryAll<{
@@ -74,9 +82,10 @@ export default async function bridgeRoutes(app: FastifyInstance) {
     }>(
       `SELECT timestamp, amount, tx_hash, note, from_address
        FROM bsc_wnav_burns
-       ${nav1Clause}
+       ${noteClause}
        ORDER BY timestamp DESC, tx_hash DESC, log_index DESC
        LIMIT ? OFFSET ?`,
+      likeParam,
       limit,
       offset,
     );

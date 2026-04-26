@@ -247,6 +247,20 @@ export type ChartPeriod = '24h' | '7d' | '30d' | '1y';
 // Network type
 export type NetworkType = 'mainnet' | 'testnet';
 
+/**
+ * Prefix of the Navio destination `note` in BSC `burnedWithNote` events (Bech32 HRP + `1`).
+ * Mainnet uses `nav`, testnet uses `tnv` per navio-core `bech32_mod_hrp`.
+ * Override with env `BSC_WNAV_NOTE_PREFIX` when indexer/API agree on the same value.
+ */
+export function wnavBridgeNotePrefix(
+  network: NetworkType,
+  notePrefixOverride?: string | null,
+): string {
+  const o = notePrefixOverride?.trim();
+  if (o) return o.toLowerCase();
+  return network === 'testnet' ? 'tnv1' : 'nav1';
+}
+
 // Supply info
 export interface SupplyInfo {
   total_supply: number;       // current total supply in satoshis
@@ -274,7 +288,7 @@ export interface SupplyChartPoint {
   total_burned: number;
 }
 
-/** BSC wNAV burn via `burnedWithNote` with Navio destination note (`nav1…`). Amounts are raw token units (typically 18 decimals). */
+/** BSC wNAV burn via `burnedWithNote` with a Navio destination note (`nav1…` mainnet, `tnv1…` testnet by default). Amounts are raw token units (typically 18 decimals). */
 export interface WrappedNavcoinBurn {
   timestamp: number;
   amount: string;

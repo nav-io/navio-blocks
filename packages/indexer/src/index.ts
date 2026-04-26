@@ -214,7 +214,7 @@ async function main(): Promise<void> {
   let wnavWatcher: WnavBurnWatcher | undefined;
   if (BSC_WNAV_ENABLED) {
     try {
-      wnavWatcher = startWnavBurnWatcher(queries);
+      wnavWatcher = startWnavBurnWatcher(queries, { network });
       console.log("[indexer]   BSC wNAV burns:  enabled (HTTP backfill + WebSocket)");
     } catch (err) {
       console.error(

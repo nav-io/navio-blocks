@@ -5,8 +5,10 @@ import {
   parseAbiItem,
   type Abi,
   type AbiEvent,
+  type Log,
 } from "viem";
 import { bsc } from "viem/chains";
+import { type NetworkType, wnavBridgeNotePrefix } from "@navio-blocks/shared";
 import type { Queries } from "../db/queries.js";
 
 const SYNC_KEY_LAST_BLOCK = "bsc_wnav_last_scanned_block";
@@ -21,10 +23,9 @@ const DEFAULT_EVENT =
 /** PublicNode and similar providers cap `eth_getLogs` block span (often 50k). */
 const MAX_LOG_RANGE = 49_999n;
 
-/** Only index burns intended for Navio (recipient note is a `nav1…` address). */
-function isWnavToNavioNote(note: string | null): boolean {
+function isWnavToNavioNote(note: string | null, expectedPrefix: string): boolean {
   if (note == null || note.length === 0) return false;
-  return note.trim().toLowerCase().startsWith("nav1");
+  return note.trim().toLowerCase().startsWith(expectedPrefix.toLowerCase());
 }
 
 function getAddress(): `0x${string}` {
@@ -50,12 +51,25 @@ export interface WnavBurnWatcher {
   stop: () => void;
 }
 
+export interface WnavBurnWatcherOptions {
+  /** Resolved chain (same as block indexer); selects default note prefix unless `BSC_WNAV_NOTE_PREFIX` is set. */
+  network: NetworkType;
+}
+
 /**
  * Index `burnedWithNote` logs from the wNAV BEP-20 contract on BSC.
- * Only persists burns whose `note` starts with `nav1` (wNAV → Navio bridge).
+ * Only persists burns whose `note` starts with the Navio Bech32 prefix for this deployment
+ * (`nav1` mainnet, `tnv1` testnet by default; override with `BSC_WNAV_NOTE_PREFIX`).
  * Uses HTTP for historical chunks (50k max) and WebSocket for live logs.
  */
-export function startWnavBurnWatcher(queries: Queries): WnavBurnWatcher {
+export function startWnavBurnWatcher(
+  queries: Queries,
+  options: WnavBurnWatcherOptions
+): WnavBurnWatcher {
+  const notePrefix = wnavBridgeNotePrefix(
+    options.network,
+    process.env.BSC_WNAV_NOTE_PREFIX
+  );
   const address = getAddress();
   const event = getBurnEvent();
   const abi = burnAbi(event);
@@ -119,7 +133,7 @@ export function startWnavBurnWatcher(queries: Queries): WnavBurnWatcher {
           ? String(noteRaw)
           : null;
 
-    if (!isWnavToNavioNote(note)) return;
+    if (!isWnavToNavioNote(note, notePrefix)) return;
 
     const timestamp = await blockTimestamp(log.blockNumber);
     queries.insertBscWnavBurn({
@@ -135,6 +149,12 @@ export function startWnavBurnWatcher(queries: Queries): WnavBurnWatcher {
 
   let stopped = false;
   let unwatch: (() => void) | undefined;
+
+  console.log(
+    "[bsc/wnav] Filtering burns to destination notes starting with %s (network=%s)",
+    notePrefix,
+    options.network
+  );
 
   void (async () => {
     try {
@@ -153,7 +173,7 @@ export function startWnavBurnWatcher(queries: Queries): WnavBurnWatcher {
         address,
         abi,
         eventName,
-        onLogs: (logs) => {
+        onLogs: (logs: Log[]) => {
           void (async () => {
             for (const log of logs) {
               try {
@@ -167,7 +187,7 @@ export function startWnavBurnWatcher(queries: Queries): WnavBurnWatcher {
             }
           })();
         },
-        onError: (err) => {
+        onError: (err: Error) => {
           console.error("[bsc/wnav] WebSocket watcher error:", err.message);
         },
       });
