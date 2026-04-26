@@ -12,6 +12,7 @@ import NftDetail from './pages/NftDetail';
 import Network from './pages/Network';
 import Price from './pages/Price';
 import Supply from './pages/Supply';
+import Search from './pages/Search';
 
 export default function App() {
   return (
@@ -30,6 +31,7 @@ export default function App() {
           <Route path="/network" element={<Network />} />
           <Route path="/supply" element={<Supply />} />
           <Route path="/price" element={<Price />} />
+          <Route path="/search" element={<Search />} />
         </Route>
       </Routes>
     </BrowserRouter>

@@ -1,0 +1,275 @@
+import {
+  createPublicClient,
+  http,
+  webSocket,
+  parseAbiItem,
+  type Abi,
+  type AbiEvent,
+} from "viem";
+import { bsc } from "viem/chains";
+import type { Queries } from "../db/queries.js";
+
+const SYNC_KEY_LAST_BLOCK = "bsc_wnav_last_scanned_block";
+
+/** Default wNAV (BEP-20) contract from Navio bridge docs; override with BSC_WNAV_ADDRESS. */
+const DEFAULT_WNAV_ADDRESS =
+  "0xBFEf6cCFC830D3BaCA4F6766a0d4AaA242Ca9F3D" as const;
+
+const DEFAULT_EVENT =
+  "event burnedWithNote(address indexed from, uint256 amount, string note)";
+
+/** PublicNode and similar providers cap `eth_getLogs` block span (often 50k). */
+const MAX_LOG_RANGE = 49_999n;
+
+/** Only index burns intended for Navio (recipient note is a `nav1…` address). */
+function isWnavToNavioNote(note: string | null): boolean {
+  if (note == null || note.length === 0) return false;
+  return note.trim().toLowerCase().startsWith("nav1");
+}
+
+function getAddress(): `0x${string}` {
+  const raw = (process.env.BSC_WNAV_ADDRESS ?? DEFAULT_WNAV_ADDRESS).trim();
+  if (!/^0x[a-fA-F0-9]{40}$/.test(raw)) {
+    throw new Error(
+      `[bsc/wnav] Invalid BSC_WNAV_ADDRESS: ${raw} (expected 0x + 40 hex chars)`
+    );
+  }
+  return raw.toLowerCase() as `0x${string}`;
+}
+
+function getBurnEvent(): AbiEvent {
+  const frag = (process.env.BSC_WNAV_EVENT ?? DEFAULT_EVENT).trim();
+  return parseAbiItem(frag) as AbiEvent;
+}
+
+function burnAbi(event: AbiEvent): Abi {
+  return [event] as Abi;
+}
+
+export interface WnavBurnWatcher {
+  stop: () => void;
+}
+
+/**
+ * Index `burnedWithNote` logs from the wNAV BEP-20 contract on BSC.
+ * Only persists burns whose `note` starts with `nav1` (wNAV → Navio bridge).
+ * Uses HTTP for historical chunks (50k max) and WebSocket for live logs.
+ */
+export function startWnavBurnWatcher(queries: Queries): WnavBurnWatcher {
+  const address = getAddress();
+  const event = getBurnEvent();
+  const abi = burnAbi(event);
+  const eventName = event.name;
+
+  const wssUrl =
+    process.env.BSC_WSS_URL?.trim() || "wss://bsc-rpc.publicnode.com";
+  const httpUrl =
+    process.env.BSC_HTTP_URL?.trim() || "https://bsc-rpc.publicnode.com";
+
+  const httpClient = createPublicClient({
+    chain: bsc,
+    transport: http(httpUrl),
+  });
+
+  const wsClient = createPublicClient({
+    chain: bsc,
+    transport: webSocket(wssUrl),
+  });
+
+  const blockTsCache = new Map<string, number>();
+
+  async function blockTimestamp(blockNumber: bigint): Promise<number> {
+    const key = blockNumber.toString();
+    const hit = blockTsCache.get(key);
+    if (hit !== undefined) return hit;
+    const block = await httpClient.getBlock({ blockNumber });
+    const ts = Number(block.timestamp);
+    blockTsCache.set(key, ts);
+    return ts;
+  }
+
+  async function persistLog(log: {
+    transactionHash?: `0x${string}` | null;
+    logIndex?: number | null;
+    blockNumber?: bigint | null;
+    args?: Record<string, unknown> | readonly unknown[];
+  }): Promise<void> {
+    if (!log.transactionHash || log.logIndex == null || log.blockNumber == null) return;
+    const args = log.args;
+    if (!args || typeof args !== "object" || Array.isArray(args)) return;
+    const a = args as Record<string, unknown>;
+    const from =
+      typeof a.from === "string"
+        ? a.from
+        : a.from !== undefined
+          ? String(a.from)
+          : null;
+    const amountRaw = a.amount;
+    const amount =
+      typeof amountRaw === "bigint"
+        ? amountRaw.toString()
+        : amountRaw !== undefined
+          ? String(amountRaw)
+          : "0";
+    const noteRaw = a.note;
+    const note =
+      typeof noteRaw === "string"
+        ? noteRaw
+        : noteRaw !== undefined
+          ? String(noteRaw)
+          : null;
+
+    if (!isWnavToNavioNote(note)) return;
+
+    const timestamp = await blockTimestamp(log.blockNumber);
+    queries.insertBscWnavBurn({
+      tx_hash: log.transactionHash as string,
+      log_index: Number(log.logIndex),
+      block_number: Number(log.blockNumber),
+      timestamp,
+      from_address: from,
+      amount,
+      note,
+    });
+  }
+
+  let stopped = false;
+  let unwatch: (() => void) | undefined;
+
+  void (async () => {
+    try {
+      await backfill(httpClient, queries, address, eventName, abi, persistLog);
+    } catch (err) {
+      console.error(
+        "[bsc/wnav] Backfill error:",
+        err instanceof Error ? err.message : err
+      );
+    }
+
+    if (stopped) return;
+
+    try {
+      unwatch = wsClient.watchContractEvent({
+        address,
+        abi,
+        eventName,
+        onLogs: (logs) => {
+          void (async () => {
+            for (const log of logs) {
+              try {
+                await persistLog(log);
+              } catch (e) {
+                console.error(
+                  "[bsc/wnav] Failed to store log:",
+                  e instanceof Error ? e.message : e
+                );
+              }
+            }
+          })();
+        },
+        onError: (err) => {
+          console.error("[bsc/wnav] WebSocket watcher error:", err.message);
+        },
+      });
+      console.log(
+        "[bsc/wnav] Watching %s::%s via %s",
+        address,
+        eventName,
+        wssUrl
+      );
+    } catch (err) {
+      console.error(
+        "[bsc/wnav] Failed to start WebSocket watcher:",
+        err instanceof Error ? err.message : err
+      );
+    }
+  })();
+
+  return {
+    stop: () => {
+      stopped = true;
+      unwatch?.();
+      unwatch = undefined;
+    },
+  };
+}
+
+async function backfill(
+  httpClient: ReturnType<typeof createPublicClient>,
+  queries: Queries,
+  address: `0x${string}`,
+  eventName: string,
+  abi: Abi,
+  persistLog: (log: {
+    transactionHash?: `0x${string}` | null;
+    logIndex?: number | null;
+    blockNumber?: bigint | null;
+    args?: Record<string, unknown> | readonly unknown[];
+  }) => Promise<void>
+): Promise<void> {
+  const latest = await httpClient.getBlockNumber();
+  const stored = queries.getSyncState(SYNC_KEY_LAST_BLOCK);
+  let from: bigint;
+  if (stored !== null && /^\d+$/.test(stored)) {
+    from = BigInt(stored) + 1n;
+  } else {
+    from = latest > MAX_LOG_RANGE ? latest - MAX_LOG_RANGE : 0n;
+  }
+
+  if (from > latest) {
+    queries.setSyncState(SYNC_KEY_LAST_BLOCK, latest.toString());
+    return;
+  }
+
+  console.log(
+    "[bsc/wnav] Backfilling %s::%s from block %s to %s",
+    address,
+    eventName,
+    from.toString(),
+    latest.toString()
+  );
+
+  let cursor = from;
+  while (cursor <= latest) {
+    const to =
+      cursor + MAX_LOG_RANGE > latest ? latest : cursor + MAX_LOG_RANGE;
+    let logs;
+    try {
+      logs = await httpClient.getContractEvents({
+        address,
+        abi,
+        eventName,
+        fromBlock: cursor,
+        toBlock: to,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("pruned")) {
+        const jump = latest > MAX_LOG_RANGE ? latest - MAX_LOG_RANGE : cursor;
+        console.warn(
+          "[bsc/wnav] Pruned history at block %s; jumping forward to %s",
+          cursor.toString(),
+          jump.toString()
+        );
+        if (jump <= cursor) {
+          console.warn("[bsc/wnav] Cannot backfill older blocks on this RPC; live events only");
+          queries.setSyncState(SYNC_KEY_LAST_BLOCK, latest.toString());
+          return;
+        }
+        cursor = jump;
+        continue;
+      }
+      throw err;
+    }
+
+    for (const log of logs) {
+      await persistLog(log);
+    }
+
+    queries.setSyncState(SYNC_KEY_LAST_BLOCK, to.toString());
+    cursor = to + 1n;
+  }
+
+  queries.setSyncState(SYNC_KEY_LAST_BLOCK, latest.toString());
+  console.log("[bsc/wnav] Backfill complete through block %s", latest.toString());
+}

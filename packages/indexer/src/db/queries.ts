@@ -10,6 +10,16 @@ import type {
 } from "@navio-blocks/shared";
 import type { TokenCollectionRecord, NftItemRecord } from "../sync/block.js";
 
+export interface BscWnavBurnInsert {
+  tx_hash: string;
+  log_index: number;
+  block_number: number;
+  timestamp: number;
+  from_address: string | null;
+  amount: string;
+  note: string | null;
+}
+
 export class Queries {
   private stmtInsertBlock;
   private stmtInsertTx;
@@ -40,6 +50,9 @@ export class Queries {
   private stmtDeleteBlockSupply;
   private stmtInsertTokenCollection;
   private stmtInsertNftItem;
+  private stmtGetSyncState;
+  private stmtSetSyncState;
+  private stmtInsertBscWnavBurn;
 
   constructor(private db: Database.Database) {
     this.stmtInsertBlock = db.prepare(`
@@ -191,6 +204,21 @@ export class Queries {
         (@token_id, @nft_index, @nft_id, @metadata_json, @mint_txid, @mint_output_hash, @mint_height, @mint_timestamp)
     `);
 
+    this.stmtGetSyncState = db.prepare(
+      `SELECT value FROM sync_state WHERE key = ?`
+    );
+
+    this.stmtSetSyncState = db.prepare(
+      `INSERT OR REPLACE INTO sync_state (key, value) VALUES (?, ?)`
+    );
+
+    this.stmtInsertBscWnavBurn = db.prepare(`
+      INSERT OR IGNORE INTO bsc_wnav_burns
+        (tx_hash, log_index, block_number, timestamp, from_address, amount, note)
+      VALUES
+        (@tx_hash, @log_index, @block_number, @timestamp, @from_address, @amount, @note)
+    `);
+
     this.stmtGetBlockSupply = db.prepare(
       `SELECT * FROM block_supply WHERE height = ?`
     );
@@ -291,6 +319,27 @@ export class Queries {
 
   setSyncHeight(height: number): void {
     this.stmtSetSyncHeight.run({ value: String(height) });
+  }
+
+  getSyncState(key: string): string | null {
+    const row = this.stmtGetSyncState.get(key) as { value: string } | undefined;
+    return row?.value ?? null;
+  }
+
+  setSyncState(key: string, value: string): void {
+    this.stmtSetSyncState.run(key, value);
+  }
+
+  insertBscWnavBurn(row: BscWnavBurnInsert): void {
+    this.stmtInsertBscWnavBurn.run({
+      tx_hash: row.tx_hash,
+      log_index: row.log_index,
+      block_number: row.block_number,
+      timestamp: row.timestamp,
+      from_address: row.from_address,
+      amount: row.amount,
+      note: row.note,
+    });
   }
 
   getBlockByHeight(height: number): Block | undefined {

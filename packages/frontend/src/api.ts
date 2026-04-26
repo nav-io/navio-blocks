@@ -108,4 +108,9 @@ export const api = {
     fetchJSON<import('@navio-blocks/shared').BlockSupply>(`/supply/block/${height}`),
   getSupplyBurned: () =>
     fetchJSON<{ total_burned: number; burned_24h: number; burned_7d: number; burned_30d: number }>('/supply/burned'),
+
+  getBridgeBurns: (limit = 50, offset = 0) =>
+    fetchJSON<import('@navio-blocks/shared').PaginatedResponse<import('@navio-blocks/shared').WrappedNavcoinBurn>>(
+      `/bridge/burns?limit=${limit}&offset=${offset}`
+    ),
 };

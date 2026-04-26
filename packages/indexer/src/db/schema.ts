@@ -152,6 +152,19 @@ export function initDatabase(dbPath: string): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_token_collections_height  ON token_collections(create_height);
     CREATE INDEX IF NOT EXISTS idx_nft_items_token_id        ON nft_items(token_id);
     CREATE INDEX IF NOT EXISTS idx_nft_items_mint_height     ON nft_items(mint_height);
+
+    CREATE TABLE IF NOT EXISTS bsc_wnav_burns (
+      tx_hash      TEXT    NOT NULL,
+      log_index    INTEGER NOT NULL,
+      block_number INTEGER NOT NULL,
+      timestamp    INTEGER NOT NULL,
+      from_address TEXT,
+      amount       TEXT    NOT NULL,
+      note         TEXT,
+      PRIMARY KEY (tx_hash, log_index)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_bsc_wnav_burns_timestamp ON bsc_wnav_burns(timestamp DESC);
   `);
 
   // Lightweight migrations for existing DBs.

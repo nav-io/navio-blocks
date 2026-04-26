@@ -10,6 +10,7 @@ import type { NetworkType } from "@navio-blocks/shared";
 import { Poller } from "./sync/poller.js";
 import { updatePeers } from "./sync/peers.js";
 import { updatePrice } from "./sync/price.js";
+import { startWnavBurnWatcher, type WnavBurnWatcher } from "./bsc/wnavBurns.js";
 
 const FILE_DIR = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(FILE_DIR, "../../../");
@@ -76,6 +77,10 @@ const POLL_INTERVAL = parseInt(process.env.POLL_INTERVAL ?? "5000", 10);
 const NETWORK = (process.env.NETWORK ?? "mainnet") as NetworkType;
 const PEER_INTERVAL = 10 * 60 * 1000; // 10 minutes
 const PRICE_INTERVAL = 5 * 60 * 1000; // 5 minutes
+
+const BSC_WNAV_ENABLED =
+  process.env.BSC_WNAV_ENABLED !== "0" &&
+  process.env.BSC_WNAV_ENABLED !== "false";
 
 function parseArgs(): { reindex: boolean; fromHeight: number } {
   const args = process.argv.slice(2);
@@ -206,6 +211,21 @@ async function main(): Promise<void> {
   );
   const priceTimer = setInterval(() => void updatePrice(queries), PRICE_INTERVAL);
 
+  let wnavWatcher: WnavBurnWatcher | undefined;
+  if (BSC_WNAV_ENABLED) {
+    try {
+      wnavWatcher = startWnavBurnWatcher(queries);
+      console.log("[indexer]   BSC wNAV burns:  enabled (HTTP backfill + WebSocket)");
+    } catch (err) {
+      console.error(
+        "[indexer] BSC wNAV watcher failed to start:",
+        err instanceof Error ? err.message : err
+      );
+    }
+  } else {
+    console.log("[indexer]   BSC wNAV burns:  disabled (BSC_WNAV_ENABLED=0)");
+  }
+
   console.log("[indexer] Started");
   console.log("[indexer]   Block polling:  every %dms", POLL_INTERVAL);
   console.log("[indexer]   Peer updates:   every %dms", PEER_INTERVAL);
@@ -215,6 +235,7 @@ async function main(): Promise<void> {
   // Graceful shutdown
   function shutdown(): void {
     console.log("\n[indexer] Shutting down...");
+    wnavWatcher?.stop();
     poller.stop();
     clearInterval(peerTimer);
     clearInterval(priceTimer);

@@ -224,13 +224,22 @@ export interface PaginatedResponse<T> {
   offset: number;
 }
 
+/** Grouped matches when the query is a partial hex hash (see search API). */
+export interface SearchMultiMatches {
+  blocks: Block[];
+  transactions: Transaction[];
+  output_hashes: string[];
+  token_ids: string[];
+}
+
 export interface SearchResult {
-  type: 'block' | 'transaction' | 'output' | 'token' | 'nft' | 'none';
+  type: 'block' | 'transaction' | 'output' | 'token' | 'nft' | 'multi' | 'none';
   block?: Block;
   transaction?: Transaction;
   output_hash?: string;
   token_id?: string;
   nft_index?: string;
+  matches?: SearchMultiMatches;
 }
 
 export type ChartPeriod = '24h' | '7d' | '30d' | '1y';
@@ -263,6 +272,15 @@ export interface SupplyChartPoint {
   height: number;
   total_supply: number;
   total_burned: number;
+}
+
+/** BSC wNAV burn via `burnedWithNote` with Navio destination note (`nav1…`). Amounts are raw token units (typically 18 decimals). */
+export interface WrappedNavcoinBurn {
+  timestamp: number;
+  amount: string;
+  tx_hash: string;
+  note?: string | null;
+  from_address?: string | null;
 }
 
 export type TokenKind = 'token' | 'nft' | 'unknown';

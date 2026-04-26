@@ -1,6 +1,23 @@
 import { FastifyInstance } from 'fastify';
-import { queryOne } from '../db.js';
-import type { Block, Transaction, SearchResult } from '@navio-blocks/shared';
+import { queryOne, queryAll } from '../db.js';
+import type { Block, Transaction, SearchResult, SearchMultiMatches } from '@navio-blocks/shared';
+
+const PARTIAL_HASH_MIN_LEN = 4;
+const PARTIAL_HASH_MAX_LEN = 63;
+const PARTIAL_CATEGORY_LIMIT = 25;
+
+function tableExists(name: string): boolean {
+  try {
+    return (
+      queryOne<{ x: number }>(
+        `SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1`,
+        name,
+      ) !== undefined
+    );
+  } catch {
+    return false;
+  }
+}
 
 function toBlock(row: Record<string, unknown>): Block {
   return { ...row, is_pos: Boolean(row.is_pos) } as unknown as Block;
@@ -33,12 +50,25 @@ export default async function searchRoutes(app: FastifyInstance) {
         200: {
           type: 'object',
           properties: {
-            type: { type: 'string', enum: ['block', 'transaction', 'output', 'token', 'nft', 'none'] },
-            block: { type: 'object', nullable: true },
-            transaction: { type: 'object', nullable: true },
+            type: {
+              type: 'string',
+              enum: ['block', 'transaction', 'output', 'token', 'nft', 'multi', 'none'],
+            },
+            block: { type: 'object', nullable: true, additionalProperties: true },
+            transaction: { type: 'object', nullable: true, additionalProperties: true },
             output_hash: { type: 'string', nullable: true },
             token_id: { type: 'string', nullable: true },
             nft_index: { type: 'string', nullable: true },
+            matches: {
+              type: 'object',
+              nullable: true,
+              properties: {
+                blocks: { type: 'array', items: { type: 'object', additionalProperties: true } },
+                transactions: { type: 'array', items: { type: 'object', additionalProperties: true } },
+                output_hashes: { type: 'array', items: { type: 'string' } },
+                token_ids: { type: 'array', items: { type: 'string' } },
+              },
+            },
           },
         },
       },
@@ -123,6 +153,88 @@ export default async function searchRoutes(app: FastifyInstance) {
       );
       if (tokenRow) {
         return { type: 'token', token_id: qLower };
+      }
+    }
+
+    // Partial hex: substring match across chain entities
+    if (
+      /^[0-9a-fA-F]+$/.test(q) &&
+      q.length >= PARTIAL_HASH_MIN_LEN &&
+      q.length <= PARTIAL_HASH_MAX_LEN
+    ) {
+      const likePat = `%${qLower}%`;
+
+      const blockRows = queryAll<Record<string, unknown>>(
+        `SELECT * FROM blocks
+         WHERE LOWER(hash) LIKE ?
+            OR LOWER(COALESCE(prev_hash, '')) LIKE ?
+            OR LOWER(COALESCE(merkle_root, '')) LIKE ?
+         ORDER BY height DESC
+         LIMIT ?`,
+        likePat,
+        likePat,
+        likePat,
+        PARTIAL_CATEGORY_LIMIT,
+      );
+
+      const txRows = queryAll<Record<string, unknown>>(
+        `SELECT * FROM transactions
+         WHERE LOWER(txid) LIKE ?
+         ORDER BY block_height DESC, tx_index DESC
+         LIMIT ?`,
+        likePat,
+        PARTIAL_CATEGORY_LIMIT,
+      );
+
+      const outputRows = queryAll<{ output_hash: string }>(
+        `SELECT output_hash FROM outputs
+         WHERE LOWER(output_hash) LIKE ?
+         LIMIT ?`,
+        likePat,
+        PARTIAL_CATEGORY_LIMIT,
+      );
+
+      const tokenIdSet = new Set<string>();
+      if (tableExists('token_collections')) {
+        for (const row of queryAll<{ token_id: string }>(
+          `SELECT token_id FROM token_collections
+           WHERE LOWER(token_id) LIKE ?
+           ORDER BY create_height DESC
+           LIMIT ?`,
+          likePat,
+          PARTIAL_CATEGORY_LIMIT,
+        )) {
+          tokenIdSet.add(row.token_id);
+        }
+      }
+      if (tableExists('nft_items')) {
+        for (const row of queryAll<{ token_id: string }>(
+          `SELECT DISTINCT token_id FROM nft_items
+           WHERE LOWER(token_id) LIKE ?
+           LIMIT ?`,
+          likePat,
+          PARTIAL_CATEGORY_LIMIT,
+        )) {
+          tokenIdSet.add(row.token_id);
+        }
+      }
+      const tokenIds = [...tokenIdSet].slice(0, PARTIAL_CATEGORY_LIMIT);
+
+      const matches: SearchMultiMatches = {
+        blocks: blockRows.map(toBlock),
+        transactions: txRows.map(toTransaction),
+        output_hashes: outputRows.map((r) => r.output_hash),
+        token_ids: tokenIds,
+      };
+
+      const hasAny =
+        matches.blocks.length > 0 ||
+        matches.transactions.length > 0 ||
+        matches.output_hashes.length > 0 ||
+        matches.token_ids.length > 0;
+
+      if (hasAny) {
+        return { type: 'multi', matches };
       }
     }
 
