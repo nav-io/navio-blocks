@@ -2,7 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { queryOne, queryAll, queryScalar } from '../db.js';
 import { rpcCall } from '../rpc.js';
 import { cached } from '../cache.js';
-import type { NetworkStats, ChartPoint } from '@navio-blocks/shared';
+import type { NetworkStats, NetworkType, ChartPoint } from '@navio-blocks/shared';
 
 interface MempoolRpcResult {
   size: number;
@@ -45,6 +45,7 @@ export default async function statsRoutes(app: FastifyInstance) {
         200: {
           type: 'object',
           properties: {
+            network: { type: 'string', enum: ['mainnet', 'testnet'] },
             height: { type: 'integer' },
             difficulty: { type: 'number' },
             mempool_size: { type: 'integer' },
@@ -60,6 +61,7 @@ export default async function statsRoutes(app: FastifyInstance) {
     },
   }, async (): Promise<NetworkStats> => {
     return cached('stats', 10_000, async () => {
+    const network = (process.env.NETWORK ?? 'mainnet') as NetworkType;
     const height = queryScalar<number>('SELECT COALESCE(MAX(height), 0) FROM blocks');
 
     const latestBlock = queryOne<{ difficulty: number }>(
@@ -127,6 +129,7 @@ export default async function statsRoutes(app: FastifyInstance) {
     }
 
     return {
+      network,
       height,
       difficulty,
       mempool_size: mempoolSize,

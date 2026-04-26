@@ -140,6 +140,7 @@ export interface BlockDetail extends Block {
 
 // Network stats
 export interface NetworkStats {
+  network: NetworkType;
   height: number;
   difficulty: number;
   mempool_size: number;
