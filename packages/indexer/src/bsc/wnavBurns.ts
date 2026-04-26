@@ -23,6 +23,18 @@ const DEFAULT_EVENT =
 /** PublicNode and similar providers cap `eth_getLogs` block span (often 50k). */
 const MAX_LOG_RANGE = 49_999n;
 
+/** Default cadence for the HTTP poll that backstops the WSS subscription. */
+const DEFAULT_POLL_INTERVAL_MS = 30_000;
+/** Heartbeat log cadence so an idle watcher still reports liveness. */
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 10 * 60_000;
+
+function envInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 function isWnavToNavioNote(note: string | null, expectedPrefix: string): boolean {
   if (note == null || note.length === 0) return false;
   return note.trim().toLowerCase().startsWith(expectedPrefix.toLowerCase());
@@ -133,7 +145,17 @@ export function startWnavBurnWatcher(
           ? String(noteRaw)
           : null;
 
-    if (!isWnavToNavioNote(note, notePrefix)) return;
+    if (!isWnavToNavioNote(note, notePrefix)) {
+      console.log(
+        "[bsc/wnav] Skipping burn (note %s does not start with %s) block=%s tx=%s amount=%s",
+        note ?? "<null>",
+        notePrefix,
+        log.blockNumber.toString(),
+        log.transactionHash,
+        amount,
+      );
+      return;
+    }
 
     const timestamp = await blockTimestamp(log.blockNumber);
     queries.insertBscWnavBurn({
@@ -156,6 +178,15 @@ export function startWnavBurnWatcher(
 
   let stopped = false;
   let unwatch: (() => void) | undefined;
+  let pollTimer: NodeJS.Timeout | undefined;
+  let heartbeatTimer: NodeJS.Timeout | undefined;
+  let pollRunning = false;
+
+  const pollIntervalMs = envInt("BSC_WNAV_POLL_INTERVAL_MS", DEFAULT_POLL_INTERVAL_MS);
+  const heartbeatIntervalMs = envInt(
+    "BSC_WNAV_HEARTBEAT_INTERVAL_MS",
+    DEFAULT_HEARTBEAT_INTERVAL_MS,
+  );
 
   console.log(
     "[bsc/wnav] Filtering burns to destination notes starting with %s (network=%s)",
@@ -173,17 +204,29 @@ export function startWnavBurnWatcher(
     "[bsc/wnav] Last scanned block in DB: %s",
     cursorAtStart ?? "<none — will start at tip - 50k>"
   );
+  console.log(
+    "[bsc/wnav] HTTP poll interval=%dms heartbeat=%dms",
+    pollIntervalMs,
+    heartbeatIntervalMs,
+  );
 
-  void (async () => {
+  async function runBackfill(verbose: boolean): Promise<void> {
+    if (pollRunning || stopped) return;
+    pollRunning = true;
     try {
-      await backfill(httpClient, queries, address, eventName, abi, persistLog);
+      await backfill(httpClient, queries, address, eventName, abi, persistLog, verbose);
     } catch (err) {
       console.error(
         "[bsc/wnav] Backfill error:",
         err instanceof Error ? err.message : err
       );
+    } finally {
+      pollRunning = false;
     }
+  }
 
+  void (async () => {
+    await runBackfill(true);
     if (stopped) return;
 
     try {
@@ -221,11 +264,30 @@ export function startWnavBurnWatcher(
         err instanceof Error ? err.message : err
       );
     }
+
+    // BSC public RPCs (PublicNode et al.) silently drop `eth_subscribe`
+    // streams after a while without firing onError. A short HTTP poll keeps
+    // the cursor advancing even if the WSS feed has gone quiet.
+    pollTimer = setInterval(() => {
+      void runBackfill(false);
+    }, pollIntervalMs);
+    heartbeatTimer = setInterval(() => {
+      const cursor = queries.getSyncState(SYNC_KEY_LAST_BLOCK);
+      console.log(
+        "[bsc/wnav] Watcher alive (cursor=%s, prefix=%s)",
+        cursor ?? "<none>",
+        notePrefix,
+      );
+    }, heartbeatIntervalMs);
   })();
 
   return {
     stop: () => {
       stopped = true;
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = undefined;
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      heartbeatTimer = undefined;
       unwatch?.();
       unwatch = undefined;
     },
@@ -243,7 +305,8 @@ async function backfill(
     logIndex?: number | null;
     blockNumber?: bigint | null;
     args?: Record<string, unknown> | readonly unknown[];
-  }) => Promise<void>
+  }) => Promise<void>,
+  verbose: boolean,
 ): Promise<void> {
   const latest = await httpClient.getBlockNumber();
   const stored = queries.getSyncState(SYNC_KEY_LAST_BLOCK);
@@ -255,24 +318,29 @@ async function backfill(
   }
 
   if (from > latest) {
-    console.log(
-      "[bsc/wnav] Cursor (%s) is at/past chain tip (%s); nothing to backfill. To re-scan, rewind 'bsc_wnav_last_scanned_block' in sync_state.",
-      from.toString(),
-      latest.toString()
-    );
+    if (verbose) {
+      console.log(
+        "[bsc/wnav] Cursor (%s) is at/past chain tip (%s); nothing to backfill. To re-scan, rewind 'bsc_wnav_last_scanned_block' in sync_state.",
+        from.toString(),
+        latest.toString()
+      );
+    }
     queries.setSyncState(SYNC_KEY_LAST_BLOCK, latest.toString());
     return;
   }
 
-  console.log(
-    "[bsc/wnav] Backfilling %s::%s from block %s to %s",
-    address,
-    eventName,
-    from.toString(),
-    latest.toString()
-  );
+  if (verbose) {
+    console.log(
+      "[bsc/wnav] Backfilling %s::%s from block %s to %s",
+      address,
+      eventName,
+      from.toString(),
+      latest.toString()
+    );
+  }
 
   let cursor = from;
+  let logsSeen = 0;
   while (cursor <= latest) {
     const to =
       cursor + MAX_LOG_RANGE > latest ? latest : cursor + MAX_LOG_RANGE;
@@ -305,6 +373,7 @@ async function backfill(
       throw err;
     }
 
+    logsSeen += logs.length;
     for (const log of logs) {
       await persistLog(log);
     }
@@ -314,5 +383,11 @@ async function backfill(
   }
 
   queries.setSyncState(SYNC_KEY_LAST_BLOCK, latest.toString());
-  console.log("[bsc/wnav] Backfill complete through block %s", latest.toString());
+  if (verbose || logsSeen > 0) {
+    console.log(
+      "[bsc/wnav] Backfill complete through block %s (%d burnedWithNote logs scanned)",
+      latest.toString(),
+      logsSeen,
+    );
+  }
 }
