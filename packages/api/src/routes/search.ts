@@ -75,9 +75,11 @@ export default async function searchRoutes(app: FastifyInstance) {
     },
   }, async (request): Promise<SearchResult> => {
     const q = request.query.q.trim();
-    const qLower = q.toLowerCase();
+    const qHex =
+      q.startsWith('0x') || q.startsWith('0X') ? q.slice(2).trim() : q;
+    const qHexLower = qHex.toLowerCase();
 
-    const nftMatch = q.match(/^([0-9a-fA-F]{64})#(\d+)$/);
+    const nftMatch = qHex.match(/^([0-9a-fA-F]{64})#(\d+)$/);
     if (nftMatch) {
       const [_, tokenId, nftIndex] = nftMatch;
       const nftRow = queryOne<{ token_id: string }>(
@@ -97,7 +99,7 @@ export default async function searchRoutes(app: FastifyInstance) {
       }
     }
 
-    // If the query is a number, search by block height
+    // If the query is a decimal block height, try that first (do not return early on miss — partial hex may still match).
     if (/^\d+$/.test(q)) {
       const row = queryOne<Record<string, unknown>>(
         'SELECT * FROM blocks WHERE height = ?',
@@ -106,14 +108,13 @@ export default async function searchRoutes(app: FastifyInstance) {
       if (row) {
         return { type: 'block', block: toBlock(row) };
       }
-      return { type: 'none' };
     }
 
     // If the query is a 64-character hex string, try block hash, txid, then output hash
-    if (/^[0-9a-fA-F]{64}$/.test(q)) {
+    if (/^[0-9a-fA-F]{64}$/.test(qHex)) {
       const blockRow = queryOne<Record<string, unknown>>(
         'SELECT * FROM blocks WHERE LOWER(hash) = LOWER(?)',
-        q,
+        qHex,
       );
       if (blockRow) {
         return { type: 'block', block: toBlock(blockRow) };
@@ -121,7 +122,7 @@ export default async function searchRoutes(app: FastifyInstance) {
 
       const txRow = queryOne<Record<string, unknown>>(
         'SELECT * FROM transactions WHERE LOWER(txid) = LOWER(?)',
-        q,
+        qHex,
       );
       if (txRow) {
         return { type: 'transaction', transaction: toTransaction(txRow) };
@@ -129,7 +130,7 @@ export default async function searchRoutes(app: FastifyInstance) {
 
       const outputRow = queryOne<{ output_hash: string }>(
         `SELECT output_hash FROM outputs WHERE LOWER(output_hash) = LOWER(?)`,
-        q,
+        qHex,
       );
       if (outputRow) {
         return { type: 'output', output_hash: outputRow.output_hash };
@@ -149,20 +150,20 @@ export default async function searchRoutes(app: FastifyInstance) {
            AND token_id <> ''
            AND COALESCE(UPPER(predicate), '') NOT IN ('PAY_FEE', 'DATA')
          LIMIT 1`,
-        qLower,
+        qHexLower,
       );
       if (tokenRow) {
-        return { type: 'token', token_id: qLower };
+        return { type: 'token', token_id: qHexLower };
       }
     }
 
     // Partial hex: substring match across chain entities
     if (
-      /^[0-9a-fA-F]+$/.test(q) &&
-      q.length >= PARTIAL_HASH_MIN_LEN &&
-      q.length <= PARTIAL_HASH_MAX_LEN
+      /^[0-9a-fA-F]+$/.test(qHex) &&
+      qHex.length >= PARTIAL_HASH_MIN_LEN &&
+      qHex.length <= PARTIAL_HASH_MAX_LEN
     ) {
-      const likePat = `%${qLower}%`;
+      const likePat = `%${qHexLower}%`;
 
       const blockRows = queryAll<Record<string, unknown>>(
         `SELECT * FROM blocks
