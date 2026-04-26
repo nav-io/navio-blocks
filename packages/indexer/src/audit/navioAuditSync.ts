@@ -40,14 +40,16 @@ export function resolveNavioAuditConfig(
     process.env.NAVIO_ELECTRUM_HOST?.trim() ||
     (network === "testnet" ? "testnet.nav.io" : "mainnet.nav.io");
 
-  const defaultPort = network === "testnet" ? "50005" : "50002";
-  const port = parseInt(process.env.NAVIO_ELECTRUM_PORT || defaultPort, 10);
-
   const ssl =
     process.env.NAVIO_ELECTRUM_SSL === "0" ||
     process.env.NAVIO_ELECTRUM_SSL === "false"
       ? false
       : true;
+
+  // Electrum servers expose: 50001 tcp, 50002 ssl, 50005 ws, 50004 wss.
+  // The navio-sdk Electrum backend uses raw TCP, so default to 50002/50001.
+  const defaultPort = ssl ? "50002" : "50001";
+  const port = parseInt(process.env.NAVIO_ELECTRUM_PORT || defaultPort, 10);
 
   const restoreFromHeight = parseInt(
     process.env.NAVIO_AUDIT_RESTORE_HEIGHT ||
@@ -63,7 +65,7 @@ export function resolveNavioAuditConfig(
     restoreFromHeight: Number.isNaN(restoreFromHeight) ? 0 : restoreFromHeight,
     electrum: {
       host,
-      port: Number.isNaN(port) ? (network === "testnet" ? 50005 : 50002) : port,
+      port: Number.isNaN(port) ? (ssl ? 50002 : 50001) : port,
       ssl,
     },
   };
