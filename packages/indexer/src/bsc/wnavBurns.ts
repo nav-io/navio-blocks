@@ -25,8 +25,14 @@ const DEFAULT_WNAV_ADDRESS =
 const DEFAULT_EVENT =
   "event BurnedWithNote(address indexed from, uint256 amount, string note)";
 
-/** PublicNode and similar providers cap `eth_getLogs` block span (often 50k). */
-const MAX_LOG_RANGE = 49_999n;
+/**
+ * Max inclusive block span per `eth_getLogs` / `getContractEvents` chunk.
+ * QuikNode and many providers enforce 10k; PublicNode often allows ~50k.
+ */
+const GETLOGS_MAX_BLOCK_SPAN = 10_000n;
+
+/** On cold start (no cursor), how far behind chain tip to begin scanning. */
+const INITIAL_LOOKBACK_BLOCKS = 49_999n;
 
 /** Default cadence for the HTTP poll that backstops the WSS subscription. */
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
@@ -97,7 +103,7 @@ export interface WnavBurnWatcherOptions {
  * Index `BurnedWithNote` logs from the wNAV BEP-20 contract on BSC.
  * Only persists burns whose `note` starts with the Navio Bech32 prefix for this deployment
  * (`nav1` mainnet, `tnv1` testnet by default; override with `BSC_WNAV_NOTE_PREFIX`).
- * Uses HTTP for historical chunks (50k max) and WebSocket for live logs.
+ * Uses HTTP for historical chunks (bounded by GETLOGS_MAX_BLOCK_SPAN per RPC) and WebSocket for live logs.
  */
 export function startWnavBurnWatcher(
   queries: Queries,
@@ -500,7 +506,10 @@ async function backfill(
   if (stored !== null && /^\d+$/.test(stored)) {
     from = BigInt(stored) + 1n;
   } else {
-    from = latest > MAX_LOG_RANGE ? latest - MAX_LOG_RANGE : 0n;
+    from =
+      latest > INITIAL_LOOKBACK_BLOCKS
+        ? latest - INITIAL_LOOKBACK_BLOCKS
+        : 0n;
   }
 
   if (from > latest) {
@@ -536,7 +545,9 @@ async function backfill(
   let logsSeen = 0;
   while (cursor <= latest) {
     const to =
-      cursor + MAX_LOG_RANGE > latest ? latest : cursor + MAX_LOG_RANGE;
+      cursor + GETLOGS_MAX_BLOCK_SPAN - 1n > latest
+        ? latest
+        : cursor + GETLOGS_MAX_BLOCK_SPAN - 1n;
     let logs;
     try {
       logs = await httpClient.getContractEvents({
@@ -549,7 +560,10 @@ async function backfill(
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("pruned")) {
-        const jump = latest > MAX_LOG_RANGE ? latest - MAX_LOG_RANGE : cursor;
+        const jump =
+          latest > INITIAL_LOOKBACK_BLOCKS
+            ? latest - INITIAL_LOOKBACK_BLOCKS
+            : cursor;
         console.warn(
           "[bsc/wnav] Pruned history at block %s; jumping forward to %s",
           cursor.toString(),

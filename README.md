@@ -257,7 +257,7 @@ The SPA search bar jumps to a detail page for a single hit, or to `/search?q=…
 
 **Supply Tracking**: The indexer computes per-block supply data:
 - **PoW blocks** (heights 1-1000): 50 NAV subsidy, halving every 210,000 blocks. Fees go to miner.
-- **BLSCT/PoS blocks** (testnet, heights > 1000): fixed 4 NAV reward. Height 1 gets 75M NAV bootstrap. **Fees are burned** (OP_RETURN outputs are unspendable).
+- **BLSCT/PoS blocks** (testnet, heights > 1000): fixed 8 NAV reward, target block time ~2 minutes. Height 1 gets 75M NAV bootstrap. **Fees are burned** (OP_RETURN outputs are unspendable).
 - **Max supply**: 250,000,000 NAV. Set `NETWORK=testnet` for testnet reward rules.
 
 ## Database

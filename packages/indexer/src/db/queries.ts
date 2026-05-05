@@ -139,9 +139,9 @@ export class Queries {
 
     this.stmtUpsertPeer = db.prepare(`
       INSERT OR REPLACE INTO peers
-        (id, addr, subversion, services, country, city, lat, lon, last_seen, first_seen)
+        (id, addr, subversion, services, country, city, lat, lon, last_seen, first_seen, last_handshake)
       VALUES
-        (@id, @addr, @subversion, @services, @country, @city, @lat, @lon, @last_seen, @first_seen)
+        (@id, @addr, @subversion, @services, @country, @city, @lat, @lon, @last_seen, @first_seen, @last_handshake)
     `);
 
     this.stmtGetPeerByAddr = db.prepare(
@@ -163,7 +163,13 @@ export class Queries {
         lat = @lat,
         lon = @lon,
         last_seen = @last_seen,
-        first_seen = @first_seen
+        first_seen = @first_seen,
+        last_handshake = CASE
+          WHEN @last_handshake IS NULL THEN last_handshake
+          WHEN last_handshake IS NULL THEN @last_handshake
+          WHEN @last_handshake > last_handshake THEN @last_handshake
+          ELSE last_handshake
+        END
       WHERE id = @id
     `);
 
@@ -489,6 +495,7 @@ export class Queries {
         lon: peer.lon ?? null,
         last_seen: peer.last_seen,
         first_seen: firstSeen,
+        last_handshake: peer.last_handshake ?? null,
       });
       return;
     }
@@ -504,6 +511,7 @@ export class Queries {
       lon: peer.lon ?? null,
       last_seen: peer.last_seen,
       first_seen: peer.first_seen,
+      last_handshake: peer.last_handshake ?? null,
     });
   }
 

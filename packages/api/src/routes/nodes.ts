@@ -169,6 +169,7 @@ export default async function nodesRoutes(app: FastifyInstance) {
                   last_seen: { type: 'integer' },
                   first_seen: { type: 'integer' },
                   reachable: { type: 'boolean', nullable: true },
+                  last_handshake: { type: 'integer', nullable: true },
                 },
               },
             },
@@ -191,6 +192,10 @@ export default async function nodesRoutes(app: FastifyInstance) {
     const peers: Peer[] = dedupedPeers.map((peer) => ({
       ...peer,
       reachable: parseReachableFlag(peer.services),
+      last_handshake:
+        typeof peer.last_handshake === 'number' && peer.last_handshake > 0
+          ? peer.last_handshake
+          : undefined,
     }));
 
     const totalNodes = peers.length;
@@ -204,8 +209,13 @@ export default async function nodesRoutes(app: FastifyInstance) {
       const country = peer.country ?? 'Unknown';
       countryMap.set(country, (countryMap.get(country) ?? 0) + 1);
 
-      const version = peer.subversion || 'Unknown';
-      versionMap.set(version, (versionMap.get(version) ?? 0) + 1);
+      // Skip peers with no advertised subversion: they're addresses we've
+      // only ever heard about via gossip and never handshook with, so they
+      // don't have a meaningful version to attribute to the distribution.
+      const version = peer.subversion?.trim();
+      if (version) {
+        versionMap.set(version, (versionMap.get(version) ?? 0) + 1);
+      }
 
       if (peer.reachable === true) listeningNodes++;
       else if (peer.reachable === false) nonListeningNodes++;

@@ -11,10 +11,11 @@ import NodeMap from '../components/NodeMap';
 import type { NodeStats, NodeMapData, Peer, StakingInfo } from '@navio-blocks/shared';
 
 /**
- * A peer's `last_seen` is set to "now" for direct/probed peers and to the
- * relay node's `nTime` for crawl-discovered peers. Anything inside this
- * window is considered "currently on the network" even if we can't probe
- * the peer (NAT, firewall…).
+ * A peer is "active" only when we've personally interacted with it (RPC
+ * peer or successful P2P `version`/`verack` handshake) within this window.
+ * Gossip-only `last_seen` timestamps are intentionally ignored — the
+ * network constantly re-gossips dead addresses with fresh `time` fields
+ * and trusting them was painting almost every peer as ACTIVE.
  */
 const ACTIVE_WINDOW_SECONDS = 3 * 60 * 60;
 
@@ -22,10 +23,15 @@ type PresenceState = 'listening' | 'active' | 'idle' | 'unknown';
 
 function presenceState(peer: Peer, nowSec: number): PresenceState {
   if (peer.reachable === true) return 'listening';
-  const age = nowSec - (peer.last_seen ?? 0);
-  if (Number.isFinite(age) && age >= 0 && age <= ACTIVE_WINDOW_SECONDS) {
-    return 'active';
+
+  const handshake = peer.last_handshake;
+  if (typeof handshake === 'number' && handshake > 0) {
+    const age = nowSec - handshake;
+    if (Number.isFinite(age) && age >= 0 && age <= ACTIVE_WINDOW_SECONDS) {
+      return 'active';
+    }
   }
+
   if (peer.reachable === false) return 'idle';
   return 'unknown';
 }
@@ -341,7 +347,7 @@ function PresenceBadge({ state }: { state: PresenceState }) {
     return (
       <span
         className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-amber-300"
-        title="Seen on the network within the last 3 hours; not confirmed listening (likely behind NAT)"
+        title="Successfully handshook within the last 3 hours; not currently confirmed listening (likely behind NAT)"
       >
         <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.8)]" />
         Active
@@ -352,7 +358,7 @@ function PresenceBadge({ state }: { state: PresenceState }) {
     return (
       <span
         className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-white/45"
-        title="Not reachable, last seen more than 3 hours ago"
+        title="Not reachable, no successful handshake in the last 3 hours"
       >
         <span className="h-1.5 w-1.5 rounded-full bg-white/30" />
         Idle
@@ -585,7 +591,7 @@ export default function Network() {
                 <FilterPill
                   active={statusFilter === 'active'}
                   onClick={() => setStatusFilter('active')}
-                  title="Peers seen on the network within the last 3 hours, including non-listening ones"
+                  title="Peers we successfully handshook with in the last 3 hours, including non-listening ones"
                 >
                   Active (3h)
                 </FilterPill>

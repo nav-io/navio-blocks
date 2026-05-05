@@ -91,16 +91,17 @@ export function initDatabase(dbPath: string): Database.Database {
     );
 
     CREATE TABLE IF NOT EXISTS peers (
-      id         INTEGER PRIMARY KEY,
-      addr       TEXT,
-      subversion TEXT,
-      services   TEXT,
-      country    TEXT,
-      city       TEXT,
-      lat        REAL,
-      lon        REAL,
-      last_seen  INTEGER,
-      first_seen INTEGER
+      id             INTEGER PRIMARY KEY,
+      addr           TEXT,
+      subversion     TEXT,
+      services       TEXT,
+      country        TEXT,
+      city           TEXT,
+      lat            REAL,
+      lon            REAL,
+      last_seen      INTEGER,
+      first_seen     INTEGER,
+      last_handshake INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS price_history (
@@ -194,6 +195,7 @@ export function initDatabase(dbPath: string): Database.Database {
   ensureColumn(db, "outputs", "predicate", "TEXT");
   ensureColumn(db, "outputs", "predicate_hex", "TEXT");
   ensureColumn(db, "outputs", "predicate_args_json", "TEXT");
+  ensureColumn(db, "peers", "last_handshake", "INTEGER");
 
   // Indexes on migrated columns (must run after ensureColumn)
   db.exec(`

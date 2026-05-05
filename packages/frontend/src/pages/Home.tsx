@@ -7,7 +7,12 @@ import { SearchBar } from '../components/SearchBar';
 import StatCard from '../components/StatCard';
 import GlowCard from '../components/GlowCard';
 import PriceChart from '../components/PriceChart';
-import type { Block, LatestOutput, ChartPoint } from '@navio-blocks/shared';
+import {
+  TESTNET_TARGET_BLOCK_SPACING_SEC,
+  type Block,
+  type ChartPoint,
+  type LatestOutput,
+} from '@navio-blocks/shared';
 
 const METRIC_PERIODS = ['24h', '7d', '30d', 'all'] as const;
 const TREND_WINDOW = 10;
@@ -276,8 +281,24 @@ export default function Home() {
           </div>
 
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <StatCard label="Latest Spacing" value={formatSpacing(latestSpacing)} />
-            <StatCard label="Average Spacing" value={formatSpacing(avgSpacing)} />
+            <StatCard
+              label="Latest Spacing"
+              value={formatSpacing(latestSpacing)}
+              subValue={
+                stats?.network === 'testnet'
+                  ? `Target ${formatSpacing(TESTNET_TARGET_BLOCK_SPACING_SEC)}`
+                  : undefined
+              }
+            />
+            <StatCard
+              label="Average Spacing"
+              value={formatSpacing(avgSpacing)}
+              subValue={
+                stats?.network === 'testnet'
+                  ? `Target ${formatSpacing(TESTNET_TARGET_BLOCK_SPACING_SEC)}`
+                  : undefined
+              }
+            />
             <StatCard label="Latest Difficulty" value={formatDifficulty(latestDifficulty)} />
             <StatCard
               label="Difficulty Change"

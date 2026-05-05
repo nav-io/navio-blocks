@@ -6,6 +6,10 @@ import GlowCard from '../components/GlowCard';
 import StatCard from '../components/StatCard';
 import PriceChart from '../components/PriceChart';
 import Loader from '../components/Loader';
+import {
+  TESTNET_TARGET_BLOCK_SPACING_SEC,
+  type NetworkType,
+} from '@navio-blocks/shared';
 
 const PERIODS = ['24h', '7d', '30d', '1y', 'all'] as const;
 type SupplyPeriod = (typeof PERIODS)[number];
@@ -32,6 +36,7 @@ function formatSignedNavPerDay(satPerDay: number): string {
 function buildSupplyProjection(
   points: { timestamp: number; height: number; total_supply: number; total_burned: number }[],
   currentBlockRewardSat: number,
+  network: NetworkType,
   avgBlockTimeSeconds: number | undefined,
   maxSupplySat: number,
   period: SupplyPeriod,
@@ -49,9 +54,11 @@ function buildSupplyProjection(
 
   const observedBlockTime = durationSec / heightDelta;
   const blockTime =
-    avgBlockTimeSeconds && Number.isFinite(avgBlockTimeSeconds) && avgBlockTimeSeconds > 0
-      ? avgBlockTimeSeconds
-      : observedBlockTime;
+    network === 'testnet'
+      ? TESTNET_TARGET_BLOCK_SPACING_SEC
+      : avgBlockTimeSeconds && Number.isFinite(avgBlockTimeSeconds) && avgBlockTimeSeconds > 0
+        ? avgBlockTimeSeconds
+        : observedBlockTime;
 
   const blocksPerDay = 86_400 / Math.max(1, blockTime);
   const emissionPerDaySat = currentBlockRewardSat * blocksPerDay;
@@ -145,6 +152,7 @@ export default function Supply() {
     return buildSupplyProjection(
       chartData ?? [],
       supply.block_reward,
+      supply.network,
       stats?.avg_block_time,
       supply.max_supply,
       supplyPeriod as SupplyPeriod,

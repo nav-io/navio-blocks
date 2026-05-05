@@ -181,6 +181,14 @@ export interface Peer {
    * - undefined: not probed (status unknown).
    */
   reachable?: boolean;
+  /**
+   * Unix seconds of the most recent successful P2P interaction with this peer
+   * (RPC direct connection or completed `version`/`verack` handshake during a
+   * crawl). Undefined when we've only ever heard about the peer via gossip.
+   * Used to classify peers as "active" without trusting third‑party gossip
+   * timestamps.
+   */
+  last_handshake?: number;
 }
 
 export interface NodeStats {
@@ -265,6 +273,9 @@ export type ChartPeriod = '24h' | '7d' | '30d' | '1y';
 
 // Network type
 export type NetworkType = 'mainnet' | 'testnet';
+
+/** Testnet PoS target block spacing (seconds), for emission estimates and UI. */
+export const TESTNET_TARGET_BLOCK_SPACING_SEC = 120;
 
 /**
  * Prefix of the Navio destination `note` in BSC `burnedWithNote` events (Bech32 HRP + `1`).

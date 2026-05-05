@@ -97,6 +97,12 @@ interface KnownNodeAddress {
   services: string;
   time: number;
   subversion?: string;
+  /**
+   * Unix seconds of the most recent successful P2P handshake we performed
+   * against this exact endpoint. Only set for the crawled endpoints we
+   * directly contacted — gossip-only addresses leave this undefined.
+   */
+  handshakeAt?: number;
 }
 
 interface GeoCacheValue {
@@ -1020,6 +1026,10 @@ async function crawlPeersViaP2P(
       known.set(key, entry);
       return;
     }
+    const handshakeAt =
+      typeof entry.handshakeAt === "number" || typeof existing.handshakeAt === "number"
+        ? Math.max(entry.handshakeAt ?? 0, existing.handshakeAt ?? 0)
+        : undefined;
     const merged: KnownNodeAddress = {
       address: existing.address,
       port: existing.port,
@@ -1029,6 +1039,7 @@ async function crawlPeersViaP2P(
         entry.subversion && entry.subversion.length > 0
           ? entry.subversion
           : existing.subversion,
+      handshakeAt,
     };
     known.set(key, merged);
   };
@@ -1068,12 +1079,14 @@ async function crawlPeersViaP2P(
         if (Number.isFinite(result.protocolVersion)) {
           endpointServicesParts.push(`proto=${result.protocolVersion}`);
         }
+        const nowSec = Math.floor(Date.now() / 1000);
         ingestKnown({
           address: endpoint.host,
           port: endpoint.port,
           services: withReachabilityTag(endpointServicesParts.join(","), result.reachable),
-          time: Math.floor(Date.now() / 1000),
+          time: nowSec,
           subversion: result.subversion,
+          handshakeAt: result.handshake ? nowSec : undefined,
         });
       }
 
@@ -1181,6 +1194,9 @@ export async function updatePeers(
         lon: toOptionalNumberSafe(geo.lon),
         last_seen: now,
         first_seen: connTime,
+        // Direct RPC peers are an active TCP session our node maintains, so
+        // every refresh counts as a fresh successful interaction.
+        last_handshake: now,
       };
 
       queries.upsertPeer(peer);
@@ -1270,6 +1286,11 @@ export async function updatePeers(
         lon: toOptionalNumberSafe(geo.lon),
         last_seen: lastSeen,
         first_seen: lastSeen,
+        // Only set when the crawl actually completed a `version`/`verack`
+        // handshake against this exact endpoint. Pure gossip leaves it
+        // undefined so the API/UI won't mistake "someone told us about this
+        // peer recently" for "we successfully talked to it".
+        last_handshake: entry.handshakeAt,
       };
 
       queries.upsertPeer(peer);
