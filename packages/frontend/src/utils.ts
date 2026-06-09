@@ -9,6 +9,19 @@ export function timeAgo(timestamp: number): string {
   return `${days}d ago`;
 }
 
+/**
+ * Format a unix-seconds timestamp as an absolute local date-time string
+ * in `YYYY-MM-DD HH:MM:SS` form, e.g. `2026-06-07 17:02:56`.
+ */
+export function formatDateTime(timestamp: number): string {
+  const d = new Date(timestamp * 1000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  );
+}
+
 export function formatNumber(n: number): string {
   return n.toLocaleString();
 }

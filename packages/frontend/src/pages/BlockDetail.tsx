@@ -3,6 +3,7 @@ import { api } from '../api';
 import { useApi } from '../hooks/useApi';
 import {
   timeAgo,
+  formatDateTime,
   formatNumber,
   truncateHash,
   formatDifficulty,
@@ -187,7 +188,7 @@ export default function BlockDetail() {
           {/* Details Grid */}
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-x-8">
             <DetailItem label="Timestamp">
-              <span>{new Date(block.timestamp * 1000).toLocaleString()}</span>
+              <span>{formatDateTime(block.timestamp)}</span>
               <span className="text-gray-500 text-xs ml-2">({timeAgo(block.timestamp)})</span>
             </DetailItem>
             <DetailItem label="Difficulty">
