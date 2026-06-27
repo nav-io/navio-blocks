@@ -16,6 +16,14 @@ export function getBlockSubsidy(height: number): number {
 }
 
 export function getExpectedBlockReward(height: number, network: NetworkType, isBlsct: boolean): number {
+  // Genesis (height 0) mints nothing: navio-core creates it with genesisReward=0
+  // and its coinbase is unspendable. The premine lands on block 1
+  // (nBLSCTFirstBlockReward). Without this guard the BLSCT branch below would
+  // wrongly credit genesis 8 NAV and inflate cumulative supply by 8 NAV.
+  if (height === 0) {
+    return 0;
+  }
+
   // Testnet with fBLSCT=true:
   // Height 1 always gets the 75M bootstrap on fBLSCT networks,
   // even if there are PoW blocks at the beginning
