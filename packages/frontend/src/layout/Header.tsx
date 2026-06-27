@@ -6,18 +6,6 @@ import { useNetwork, rememberNetwork, switchNetworkHref, type Network } from '..
 
 const NAVIO_LOGO_URL = '/navio-logo.svg';
 
-function TestnetBadge() {
-  return (
-    <span
-      className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/40 bg-amber-400/10 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-amber-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
-      title="You are viewing the Navio testnet"
-    >
-      <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)]" />
-      Testnet
-    </span>
-  );
-}
-
 const NETWORK_OPTIONS: { value: Network; label: string }[] = [
   { value: 'mainnet', label: 'Mainnet' },
   { value: 'testnet', label: 'Testnet' },
@@ -69,7 +57,6 @@ const navLinks = [
 
 export function Header() {
   const [menuOpen, setMenuOpen] = useState(false);
-  const isTestnet = useNetwork() === 'testnet';
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 border-b border-white/10 bg-navy/85 backdrop-blur-xl shadow-[0_8px_30px_rgba(2,6,23,0.45)]">
@@ -87,7 +74,6 @@ export function Header() {
             loading="eager"
             decoding="async"
           />
-          {isTestnet && <TestnetBadge />}
         </Link>
 
         {/* Desktop nav */}
@@ -111,12 +97,12 @@ export function Header() {
         </nav>
 
         {/* Search + Ticker + Network toggle (desktop) */}
-        <div className="hidden md:flex items-center gap-3 ml-auto">
-          <SearchBar className="w-80" compact />
-          <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+        <div className="hidden md:flex items-center gap-2 ml-auto min-w-0">
+          <SearchBar className="w-48 lg:w-64 min-w-0" compact />
+          <div className="hidden lg:block shrink-0 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
             <PriceTicker />
           </div>
-          <NetworkToggle />
+          <NetworkToggle className="shrink-0" />
         </div>
 
         {/* Hamburger (mobile) */}
