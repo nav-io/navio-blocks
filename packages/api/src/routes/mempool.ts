@@ -12,7 +12,7 @@ interface MempoolRpcResult {
 }
 
 export default async function mempoolRoutes(app: FastifyInstance) {
-  app.get('/api/mempool', {
+  app.get('/mempool', {
     schema: {
       tags: ['Mempool'],
       description: 'Live mempool information from the node',

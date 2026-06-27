@@ -6,8 +6,10 @@ import cors from "@fastify/cors";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import fastifyStatic from "@fastify/static";
+import type { NetworkType } from "@navio-blocks/shared";
 import { ENV_PATH } from "./env.js";
 import { initExplorerDb } from "./db.js";
+import { networkStore } from "./context.js";
 
 import blocksRoutes from "./routes/blocks.js";
 import transactionsRoutes from "./routes/transactions.js";
@@ -88,17 +90,35 @@ async function main() {
     transformSpecificationClone: true,
   });
 
-  // Routes
-  await app.register(blocksRoutes);
-  await app.register(transactionsRoutes);
-  await app.register(searchRoutes);
-  await app.register(statsRoutes);
-  await app.register(mempoolRoutes);
-  await app.register(nodesRoutes);
-  await app.register(priceRoutes);
-  await app.register(supplyRoutes);
-  await app.register(tokenRoutes);
-  await app.register(bridgeRoutes);
+  // Routes — registered once per network. Mainnet is served under `/api/*`
+  // and testnet under `/api/testnet/*`. An onRequest hook stamps the active
+  // network into AsyncLocalStorage so db / rpc / cache helpers stay scoped.
+  const networkMounts: { network: NetworkType; prefix: string }[] = [
+    { network: "mainnet", prefix: "/api" },
+    { network: "testnet", prefix: "/api/testnet" },
+  ];
+
+  for (const { network, prefix } of networkMounts) {
+    await app.register(
+      async (scope) => {
+        scope.addHook("onRequest", (_request, _reply, done) => {
+          networkStore.enterWith(network);
+          done();
+        });
+        await scope.register(blocksRoutes);
+        await scope.register(transactionsRoutes);
+        await scope.register(searchRoutes);
+        await scope.register(statsRoutes);
+        await scope.register(mempoolRoutes);
+        await scope.register(nodesRoutes);
+        await scope.register(priceRoutes);
+        await scope.register(supplyRoutes);
+        await scope.register(tokenRoutes);
+        await scope.register(bridgeRoutes);
+      },
+      { prefix }
+    );
+  }
 
   // Serve frontend static build in production
   const __dirname = dirname(fileURLToPath(import.meta.url));

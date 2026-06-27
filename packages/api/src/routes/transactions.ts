@@ -324,7 +324,7 @@ export default async function transactionsRoutes(app: FastifyInstance) {
   // GET /api/outputs/stats — Output type distribution
   app.get<{
     Querystring: { include_coinbase?: string; period?: string };
-  }>('/api/outputs/stats', {
+  }>('/outputs/stats', {
     schema: {
       tags: ['Outputs'],
       description: 'Get output type distribution stats with optional timeframe',
@@ -428,7 +428,7 @@ export default async function transactionsRoutes(app: FastifyInstance) {
   });
 
   // GET /api/staking — Staking overview
-  app.get('/api/staking', {
+  app.get('/staking', {
     schema: {
       tags: ['Staking'],
       description: 'Get staking overview: active stakes, total staked, age distribution, top stakes',
@@ -523,7 +523,7 @@ export default async function transactionsRoutes(app: FastifyInstance) {
   // GET /api/outputs/:hash — Output detail
   app.get<{
     Params: { hash: string };
-  }>('/api/outputs/:hash', {
+  }>('/outputs/:hash', {
     schema: {
       tags: ['Outputs'],
       description: 'Get output detail by output hash',
@@ -603,7 +603,7 @@ export default async function transactionsRoutes(app: FastifyInstance) {
   // GET /api/outputs — Outputs list with filtering
   app.get<{
     Querystring: { limit?: number; offset?: number; type?: string; token_id?: string; is_nft?: string; token_mode?: string; all?: string; spent?: string };
-  }>('/api/outputs', {
+  }>('/outputs', {
     schema: {
       tags: ['Outputs'],
       description: 'Get outputs with optional type, token, and spent filters',
@@ -746,7 +746,7 @@ export default async function transactionsRoutes(app: FastifyInstance) {
   // GET /api/txs/:txidOrOutput — Transaction detail with inputs and outputs
   app.get<{
     Params: { txidOrOutput: string };
-  }>('/api/txs/:txidOrOutput', {
+  }>('/txs/:txidOrOutput', {
     schema: {
       tags: ['Transactions'],
       description: 'Get transaction details including inputs and outputs',

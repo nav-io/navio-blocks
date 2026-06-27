@@ -35,7 +35,7 @@ function toTransaction(row: Record<string, unknown>): Transaction {
 export default async function searchRoutes(app: FastifyInstance) {
   app.get<{
     Querystring: { q: string };
-  }>('/api/search', {
+  }>('/search', {
     schema: {
       tags: ['Search'],
       description: 'Search for a block, transaction, output, token collection, or NFT',

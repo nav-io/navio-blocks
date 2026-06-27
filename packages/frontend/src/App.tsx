@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { detectNetwork, basenameFor, NetworkProvider } from './network';
 import { Layout } from './layout/Layout';
 import Home from './pages/Home';
 import BlockList from './pages/BlockList';
@@ -15,8 +16,10 @@ import Supply from './pages/Supply';
 import Search from './pages/Search';
 
 export default function App() {
+  const network = detectNetwork();
   return (
-    <BrowserRouter>
+    <NetworkProvider network={network}>
+    <BrowserRouter basename={basenameFor(network)}>
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<Home />} />
@@ -35,5 +38,6 @@ export default function App() {
         </Route>
       </Routes>
     </BrowserRouter>
+    </NetworkProvider>
   );
 }

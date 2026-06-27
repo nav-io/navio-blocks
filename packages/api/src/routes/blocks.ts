@@ -24,7 +24,7 @@ export default async function blocksRoutes(app: FastifyInstance) {
   // GET /api/blocks — Latest blocks, paginated
   app.get<{
     Querystring: { limit?: number; offset?: number };
-  }>('/api/blocks', {
+  }>('/blocks', {
     schema: {
       tags: ['Blocks'],
       description: 'Get latest blocks with pagination',
@@ -91,7 +91,7 @@ export default async function blocksRoutes(app: FastifyInstance) {
   // GET /api/blocks/:hashOrHeight — Single block by hash or height
   app.get<{
     Params: { hashOrHeight: string };
-  }>('/api/blocks/:hashOrHeight', {
+  }>('/blocks/:hashOrHeight', {
     schema: {
       tags: ['Blocks'],
       description: 'Get a single block by hash or height',
@@ -147,7 +147,7 @@ export default async function blocksRoutes(app: FastifyInstance) {
   app.get<{
     Params: { hashOrHeight: string };
     Querystring: { limit?: number; offset?: number };
-  }>('/api/blocks/:hashOrHeight/txs', {
+  }>('/blocks/:hashOrHeight/txs', {
     schema: {
       tags: ['Blocks'],
       description: 'Get transactions within a block',

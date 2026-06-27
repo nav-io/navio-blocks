@@ -1,0 +1,6 @@
+[Unit]
+Description=Navio Block Explorer (mainnet + testnet indexers + API)
+Wants=navio-indexer-mainnet.service navio-indexer-testnet.service navio-api.service
+
+[Install]
+WantedBy=multi-user.target

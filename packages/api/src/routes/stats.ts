@@ -2,7 +2,8 @@ import { FastifyInstance } from 'fastify';
 import { queryOne, queryAll, queryScalar } from '../db.js';
 import { rpcCall } from '../rpc.js';
 import { cached } from '../cache.js';
-import type { NetworkStats, NetworkType, ChartPoint } from '@navio-blocks/shared';
+import { currentNetwork } from '../context.js';
+import type { NetworkStats, ChartPoint } from '@navio-blocks/shared';
 
 interface MempoolRpcResult {
   size: number;
@@ -37,7 +38,7 @@ function periodConfig(
 
 export default async function statsRoutes(app: FastifyInstance) {
   // GET /api/stats — Network overview
-  app.get('/api/stats', {
+  app.get('/stats', {
     schema: {
       tags: ['Stats'],
       description: 'Network overview statistics',
@@ -61,7 +62,7 @@ export default async function statsRoutes(app: FastifyInstance) {
     },
   }, async (): Promise<NetworkStats> => {
     return cached('stats', 10_000, async () => {
-    const network = (process.env.NETWORK ?? 'mainnet') as NetworkType;
+    const network = currentNetwork();
     const height = queryScalar<number>('SELECT COALESCE(MAX(height), 0) FROM blocks');
 
     const latestBlock = queryOne<{ difficulty: number }>(
@@ -146,7 +147,7 @@ export default async function statsRoutes(app: FastifyInstance) {
   // GET /api/stats/chart — Chart data for block spacing, difficulty and tx counts
   app.get<{
     Querystring: { period?: StatsChartPeriod };
-  }>('/api/stats/chart', {
+  }>('/stats/chart', {
     schema: {
       tags: ['Stats'],
       description: 'Chart data for block spacing, difficulty, and transaction counts',

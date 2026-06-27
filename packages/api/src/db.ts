@@ -2,7 +2,9 @@ import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import Database from "better-sqlite3";
+import type { NetworkType } from "@navio-blocks/shared";
 import { resolvePathFromEnv } from "./env.js";
+import { NETWORKS, currentNetwork } from "./context.js";
 
 function hasCoreTables(dbPath: string): boolean {
   try {
@@ -21,8 +23,16 @@ function hasCoreTables(dbPath: string): boolean {
   }
 }
 
-function candidateDbPaths(): string[] {
-  const rawPath = process.env.DB_PATH ?? "./navio-blocks.db";
+/** Raw DB_PATH env value for a network (relative or absolute). */
+function rawDbPath(network: NetworkType): string {
+  if (network === "testnet") {
+    return process.env.TESTNET_DB_PATH ?? "./navio-blocks.testnet.db";
+  }
+  return process.env.DB_PATH ?? "./navio-blocks.db";
+}
+
+function candidateDbPaths(network: NetworkType): string[] {
+  const rawPath = rawDbPath(network);
   const primary = resolvePathFromEnv(rawPath);
   const indexerFallback = resolvePathFromEnv(
     `./packages/indexer/${basename(rawPath)}`
@@ -37,14 +47,15 @@ function firstReadyPath(paths: string[]): string | null {
   return null;
 }
 
-let db: Database.Database | undefined;
+const handles = new Map<NetworkType, Database.Database>();
 
 /**
- * Wait for the indexer to create a readable database, then open read-only.
- * Avoids SQLITE_CANTOPEN when API and indexer start together (`npm run dev`).
+ * Wait for the indexer(s) to create readable databases, then open them
+ * read-only. Mainnet is required; testnet is optional so the explorer still
+ * boots if only the mainnet indexer is running (testnet routes then error
+ * until its database appears — restart the API to pick it up).
  */
 export async function initExplorerDb(): Promise<void> {
-  const paths = candidateDbPaths();
   const maxWait = Math.max(
     1000,
     Number(process.env.API_DB_WAIT_MS ?? 120_000) || 120_000
@@ -53,37 +64,64 @@ export async function initExplorerDb(): Promise<void> {
   const start = Date.now();
   let lastLog = 0;
 
-  let chosen: string | null = firstReadyPath(paths);
-  while (!chosen && Date.now() - start < maxWait) {
+  // Block on mainnet (the default network); poll until ready or timeout.
+  const mainnetPaths = candidateDbPaths("mainnet");
+  let mainnetPath = firstReadyPath(mainnetPaths);
+  while (!mainnetPath && Date.now() - start < maxWait) {
     await delay(pollMs);
-    chosen = firstReadyPath(paths);
+    mainnetPath = firstReadyPath(mainnetPaths);
     const now = Date.now();
-    if (!chosen && now - lastLog >= 5000) {
+    if (!mainnetPath && now - lastLog >= 5000) {
       console.warn(
-        "[api] Waiting for indexer database (paths: %s). Start the indexer or set API_DB_WAIT_MS.",
-        paths.join(" | ")
+        "[api] Waiting for mainnet database (paths: %s). Start the indexer or set API_DB_WAIT_MS.",
+        mainnetPaths.join(" | ")
       );
       lastLog = now;
     }
   }
 
-  if (!chosen) {
+  if (!mainnetPath) {
     throw new Error(
-      `[api] No readable explorer database after ${maxWait}ms. Tried: ${paths.join(", ")}. ` +
-        "Create it by starting the indexer first, or fix DB_PATH."
+      `[api] No readable mainnet database after ${maxWait}ms. Tried: ${mainnetPaths.join(", ")}. ` +
+        "Create it by starting the mainnet indexer first, or fix DB_PATH."
     );
   }
+  openHandle("mainnet", mainnetPath);
 
-  console.log(`[api] Using database at ${chosen}`);
-  db = new Database(chosen, { readonly: true });
-  db.pragma("journal_mode = WAL");
+  // Testnet is best-effort: open if already present, otherwise warn and skip.
+  const testnetPaths = candidateDbPaths("testnet");
+  const testnetPath = firstReadyPath(testnetPaths);
+  if (testnetPath) {
+    openHandle("testnet", testnetPath);
+  } else {
+    console.warn(
+      "[api] No readable testnet database (paths: %s). Testnet routes will be unavailable until it exists and the API restarts.",
+      testnetPaths.join(" | ")
+    );
+  }
 }
 
-function getDb(): Database.Database {
-  if (!db) {
-    throw new Error("[api] Database not initialized; initExplorerDb() must run before handling requests");
+function openHandle(network: NetworkType, dbPath: string): void {
+  console.log(`[api] Using ${network} database at ${dbPath}`);
+  const handle = new Database(dbPath, { readonly: true });
+  handle.pragma("journal_mode = WAL");
+  handles.set(network, handle);
+}
+
+function getDb(network: NetworkType = currentNetwork()): Database.Database {
+  const handle = handles.get(network);
+  if (!handle) {
+    throw new Error(
+      `[api] No database available for network '${network}'. ` +
+        "Ensure its indexer has run and the API was (re)started."
+    );
   }
-  return db;
+  return handle;
+}
+
+/** True if a database is mounted for the given (or current) network. */
+export function hasDb(network: NetworkType = currentNetwork()): boolean {
+  return handles.has(network);
 }
 
 /**

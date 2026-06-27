@@ -1,8 +1,8 @@
 import { FastifyInstance } from 'fastify';
 import { queryOne, queryAll, queryScalar } from '../db.js';
 import { cached } from '../cache.js';
+import { currentNetwork } from '../context.js';
 import type {
-  NetworkType,
   SupplyInfo,
   BlockSupply,
   SupplyChartPoint,
@@ -60,7 +60,7 @@ export default async function supplyRoutes(app: FastifyInstance) {
   // ----------------------------------------------------------------
   // GET /api/supply — Current supply overview
   // ----------------------------------------------------------------
-  app.get('/api/supply', {
+  app.get('/supply', {
     schema: {
       tags: ['Supply'],
       description: 'Current supply overview including total supply, max supply, and burned fees',
@@ -88,7 +88,7 @@ export default async function supplyRoutes(app: FastifyInstance) {
       'SELECT COALESCE(SUM(fees_burned), 0) FROM block_supply',
     );
 
-    const network = (process.env.NETWORK ?? 'mainnet') as NetworkType;
+    const network = currentNetwork();
 
     return {
       total_supply: latest?.total_supply ?? 0,
@@ -106,7 +106,7 @@ export default async function supplyRoutes(app: FastifyInstance) {
   // ----------------------------------------------------------------
   app.get<{
     Querystring: { period?: SupplyChartPeriod };
-  }>('/api/supply/chart', {
+  }>('/supply/chart', {
     schema: {
       tags: ['Supply'],
       description: 'Supply chart data over time, sampled to keep under ~500 points',
@@ -215,7 +215,7 @@ export default async function supplyRoutes(app: FastifyInstance) {
   // ----------------------------------------------------------------
   app.get<{
     Params: { height: string };
-  }>('/api/supply/block/:height', {
+  }>('/supply/block/:height', {
     schema: {
       tags: ['Supply'],
       description: 'Supply data for a specific block height',
@@ -262,7 +262,7 @@ export default async function supplyRoutes(app: FastifyInstance) {
   // ----------------------------------------------------------------
   // GET /api/supply/burned — Burned fees summary
   // ----------------------------------------------------------------
-  app.get('/api/supply/burned', {
+  app.get('/supply/burned', {
     schema: {
       tags: ['Supply'],
       description: 'Summary of total burned fees and recent burned fees by period',

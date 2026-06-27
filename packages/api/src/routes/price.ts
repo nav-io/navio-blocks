@@ -29,7 +29,7 @@ function samplingInterval(period: ChartPeriod): { cutoff: number; interval: numb
 
 export default async function priceRoutes(app: FastifyInstance) {
   // GET /api/price — Current price with 24h change
-  app.get('/api/price', {
+  app.get('/price', {
     schema: {
       tags: ['Price'],
       description: 'Current NAV price with 24h change percentage',
@@ -90,7 +90,7 @@ export default async function priceRoutes(app: FastifyInstance) {
   // GET /api/price/history — Historical price data
   app.get<{
     Querystring: { period?: ChartPeriod };
-  }>('/api/price/history', {
+  }>('/price/history', {
     schema: {
       tags: ['Price'],
       description: 'Historical price data for charting',

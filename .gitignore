@@ -3,6 +3,8 @@ dist/
 *.db
 *.db-journal
 .env
+.env.mainnet
+.env.testnet
 .DS_Store
 *.db-shm
 *.db-wal

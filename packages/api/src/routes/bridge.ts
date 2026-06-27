@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { queryAll, queryOne, queryScalar } from '../db.js';
+import { currentNetwork } from '../context.js';
 import type {
-  NetworkType,
   NavioBridgeAuditOutgoing,
   NavioBridgeAuditSummary,
   PaginatedResponse,
@@ -33,7 +33,7 @@ interface BridgeAuditSummaryResponse {
 export default async function bridgeRoutes(app: FastifyInstance) {
   app.get<{
     Querystring: { limit?: number; offset?: number };
-  }>('/api/bridge/burns', {
+  }>('/bridge/burns', {
     schema: {
       tags: ['Bridge'],
       summary: 'wNAV (BSC) burn history',
@@ -79,8 +79,12 @@ export default async function bridgeRoutes(app: FastifyInstance) {
       return { data: [], total: 0, limit, offset };
     }
 
-    const network = (process.env.NETWORK ?? 'mainnet') as NetworkType;
-    const notePrefix = wnavBridgeNotePrefix(network, process.env.BSC_WNAV_NOTE_PREFIX);
+    const network = currentNetwork();
+    const prefixOverride =
+      network === 'testnet'
+        ? process.env.TESTNET_BSC_WNAV_NOTE_PREFIX
+        : process.env.BSC_WNAV_NOTE_PREFIX;
+    const notePrefix = wnavBridgeNotePrefix(network, prefixOverride);
     const noteClause = `WHERE LOWER(TRIM(note)) LIKE ?`;
     const likeParam = `${notePrefix}%`;
 
@@ -120,7 +124,7 @@ export default async function bridgeRoutes(app: FastifyInstance) {
     };
   });
 
-  app.get('/api/bridge/audit/summary', {
+  app.get('/bridge/audit/summary', {
     schema: {
       tags: ['Bridge'],
       summary: 'BLSCT audit wallet snapshot (indexed payouts)',
@@ -153,7 +157,7 @@ export default async function bridgeRoutes(app: FastifyInstance) {
 
   app.get<{
     Querystring: { limit?: number; offset?: number };
-  }>('/api/bridge/audit/outgoing', {
+  }>('/bridge/audit/outgoing', {
     schema: {
       tags: ['Bridge'],
       summary: 'Outgoing NAV payouts from the audited bridge wallet',

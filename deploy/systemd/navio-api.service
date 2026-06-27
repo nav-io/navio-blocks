@@ -1,0 +1,21 @@
+[Unit]
+Description=Navio Block Explorer — API (serves both networks + frontend)
+After=network-online.target navio-indexer-mainnet.service
+Wants=network-online.target
+PartOf=navio-explorer.target
+
+[Service]
+Type=simple
+User=navio
+Group=navio
+WorkingDirectory=/opt/navio-blocks
+# .env holds both mainnet (DB_PATH, RPC_*) and testnet (TESTNET_*) config.
+EnvironmentFile=/opt/navio-blocks/.env
+# Wait up to 10 min for the mainnet indexer to create its database on first boot.
+Environment=API_DB_WAIT_MS=600000
+ExecStart=/usr/bin/node packages/api/dist/index.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target navio-explorer.target

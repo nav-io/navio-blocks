@@ -1,7 +1,16 @@
-const API_BASE = '/api';
+// The explorer serves both networks from one origin: mainnet under `/api/*`
+// and testnet under `/api/testnet/*`. The active network is encoded in the URL
+// path (`/testnet/...`), which is also the router basename, so we derive the
+// API base from the current location at call time — no extra wiring needed.
+function apiBase(): string {
+  if (typeof window !== 'undefined' && window.location.pathname.startsWith('/testnet')) {
+    return '/api/testnet';
+  }
+  return '/api';
+}
 
 async function fetchJSON<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`);
+  const res = await fetch(`${apiBase()}${path}`);
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }

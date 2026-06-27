@@ -122,7 +122,7 @@ async function dedupePeersByCanonicalAddress(peers: Peer[]): Promise<Peer[]> {
 
 export default async function nodesRoutes(app: FastifyInstance) {
   // GET /api/nodes — Peer statistics with aggregations
-  app.get('/api/nodes', {
+  app.get('/nodes', {
     schema: {
       tags: ['Nodes'],
       description: 'Peer statistics with country and version aggregations',
@@ -240,7 +240,7 @@ export default async function nodesRoutes(app: FastifyInstance) {
   });
 
   // GET /api/nodes/map — Peer data for map rendering
-  app.get('/api/nodes/map', {
+  app.get('/nodes/map', {
     schema: {
       tags: ['Nodes'],
       description: 'Peer geolocation data for map visualization',

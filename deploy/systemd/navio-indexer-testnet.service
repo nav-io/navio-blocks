@@ -1,0 +1,20 @@
+[Unit]
+Description=Navio Block Explorer — testnet indexer
+After=network-online.target
+Wants=network-online.target
+PartOf=navio-explorer.target
+
+[Service]
+Type=simple
+User=navio
+Group=navio
+WorkingDirectory=/opt/navio-blocks
+# Base config first, network-specific file second (overrides shared keys).
+EnvironmentFile=/opt/navio-blocks/.env
+EnvironmentFile=/opt/navio-blocks/.env.testnet
+ExecStart=/usr/bin/node packages/indexer/dist/index.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target navio-explorer.target

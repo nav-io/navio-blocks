@@ -2,8 +2,7 @@ import { useState } from 'react';
 import { Link, NavLink } from 'react-router-dom';
 import { SearchBar } from '../components/SearchBar';
 import { PriceTicker } from '../components/PriceTicker';
-import { useApi } from '../hooks/useApi';
-import { api } from '../api';
+import { useNetwork, rememberNetwork, switchNetworkHref, type Network } from '../network';
 
 const NAVIO_LOGO_URL = '/navio-logo.svg';
 
@@ -19,6 +18,45 @@ function TestnetBadge() {
   );
 }
 
+const NETWORK_OPTIONS: { value: Network; label: string }[] = [
+  { value: 'mainnet', label: 'Mainnet' },
+  { value: 'testnet', label: 'Testnet' },
+];
+
+/** Segmented Mainnet/Testnet switch. Switching is a full navigation since the
+ *  API base and router basename both change with the network. */
+function NetworkToggle({ className = '' }: { className?: string }) {
+  const active = useNetwork();
+  return (
+    <div
+      className={`flex items-center rounded-full border border-white/10 bg-white/[0.03] p-1 ${className}`}
+      role="group"
+      aria-label="Select network"
+    >
+      {NETWORK_OPTIONS.map(({ value, label }) => {
+        const isActive = value === active;
+        return (
+          <a
+            key={value}
+            href={switchNetworkHref(value)}
+            onClick={() => rememberNetwork(value)}
+            aria-current={isActive ? 'true' : undefined}
+            className={`px-3 py-1 text-xs font-semibold rounded-full transition-all ${
+              isActive
+                ? value === 'testnet'
+                  ? 'text-amber-200 bg-amber-400/15 shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]'
+                  : 'text-white bg-gradient-to-r from-neon-blue/30 via-neon-purple/25 to-neon-pink/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.2)]'
+                : 'text-white/50 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            {label}
+          </a>
+        );
+      })}
+    </div>
+  );
+}
+
 const navLinks = [
   { to: '/', label: 'Home' },
   { to: '/blocks', label: 'Blocks' },
@@ -31,8 +69,7 @@ const navLinks = [
 
 export function Header() {
   const [menuOpen, setMenuOpen] = useState(false);
-  const { data: stats } = useApi(() => api.getStats(), []);
-  const isTestnet = stats?.network === 'testnet';
+  const isTestnet = useNetwork() === 'testnet';
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 border-b border-white/10 bg-navy/85 backdrop-blur-xl shadow-[0_8px_30px_rgba(2,6,23,0.45)]">
@@ -73,12 +110,13 @@ export function Header() {
           ))}
         </nav>
 
-        {/* Search + Ticker (desktop) */}
+        {/* Search + Ticker + Network toggle (desktop) */}
         <div className="hidden md:flex items-center gap-3 ml-auto">
           <SearchBar className="w-80" compact />
           <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
             <PriceTicker />
           </div>
+          <NetworkToggle />
         </div>
 
         {/* Hamburger (mobile) */}
@@ -124,6 +162,9 @@ export function Header() {
             <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
               <PriceTicker />
             </div>
+          </div>
+          <div className="px-3 pt-3">
+            <NetworkToggle className="w-full justify-center" />
           </div>
         </div>
       )}
