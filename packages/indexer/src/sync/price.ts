@@ -61,6 +61,26 @@ async function resolvePair(a: Address, b: Address): Promise<Address> {
   return pair;
 }
 
+const COIN = 100_000_000; // satoshis per NAV
+
+/** Best-effort 24h USD volume for the wNAV/WBNB pancake pair (0 on failure). */
+async function fetchPancakeVolume24h(): Promise<number> {
+  try {
+    const pair = await resolvePair(WNAV, WBNB);
+    const res = await fetch(
+      `https://api.dexscreener.com/latest/dex/pairs/bsc/${pair}`
+    );
+    if (!res.ok) return 0;
+    const body = (await res.json()) as {
+      pairs?: { volume?: { h24?: number } }[];
+    };
+    const v = body.pairs?.[0]?.volume?.h24;
+    return typeof v === "number" && Number.isFinite(v) ? v : 0;
+  } catch {
+    return 0;
+  }
+}
+
 /** Price of `base` quoted in `quote`, decimals-adjusted, from their pair reserves. */
 async function pairPrice(
   base: Address,
@@ -111,20 +131,28 @@ export async function updatePrice(queries: Queries): Promise<void> {
     }
     const priceBtc = btcUsd > 0 ? navUsd / btcUsd : 0;
 
+    // Market cap = circulating NAV supply (from the chain) * price.
+    const supplySat = queries.getLatestSupply()?.total_supply ?? 0;
+    const marketCap = (supplySat / COIN) * navUsd;
+
+    // 24h volume isn't in pair reserves; pull it from Dexscreener (best-effort).
+    const volume24h = await fetchPancakeVolume24h();
+
     const point: PriceHistoryPoint = {
       timestamp: Math.floor(Date.now() / 1000),
       price_usd: navUsd,
       price_btc: priceBtc,
-      // PancakeSwap pair reserves don't expose 24h volume / market cap on-chain.
-      volume_24h: 0,
-      market_cap: 0,
+      volume_24h: volume24h,
+      market_cap: marketCap,
     };
 
     queries.insertPricePoint(point);
     console.log(
       `[price] Updated (PancakeSwap wNAV/WBNB): $${point.price_usd.toFixed(
         6
-      )} / ${point.price_btc.toFixed(8)} BTC (BNB $${bnbUsd.toFixed(2)})`
+      )} / ${point.price_btc.toFixed(8)} BTC (BNB $${bnbUsd.toFixed(
+        2
+      )}, vol24h $${Math.round(volume24h)}, mcap $${Math.round(marketCap)})`
     );
   } catch (err) {
     console.error("[price] Error fetching PancakeSwap price:", err);
