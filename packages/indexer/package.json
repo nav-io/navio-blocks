@@ -18,7 +18,7 @@
     "@navio-blocks/shared": "*",
     "better-sqlite3": "^11.0.0",
     "dotenv": "^16.4.0",
-    "navio-sdk": "^0.1.13",
+    "navio-sdk": "^0.1.15",
     "viem": "^2.48.4"
   },
   "engines": {
