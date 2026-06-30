@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import type { NetworkType } from "@navio-blocks/shared";
 import type { NavioClient as NavioClientType } from "navio-sdk";
 import type { Queries } from "../db/queries.js";
+import { deriveStakeEvents } from "./stakeEvents.js";
 
 /** Use CJS entry so `better-sqlite3` / `fs` load via real `require` (ESM bundle uses a broken `__require` shim). */
 const requireSdk = createRequire(import.meta.url);
@@ -159,6 +160,12 @@ export async function syncNavioAuditWallet(
       .filter((r) => BigInt(r.amount_sat) > 0n)
       .sort((a, b) => b.block_height - a.block_height);
 
+    // Stake / unstake events. The explorer's block sync already tags staked
+    // commitment outputs (output_type='stake'); cross-reference the audit
+    // wallet's owned outputs against that set (see deriveStakeEvents).
+    const stakeKeys = queries.stakeOutputKeys();
+    const stakeEventRows = deriveStakeEvents(outputs, stakeKeys);
+
     const balanceSat =
       typeof bal === "bigint" ? bal.toString() : String(bal);
 
@@ -171,12 +178,14 @@ export async function syncNavioAuditWallet(
         error_message: null,
         updated_at: now,
       },
-      outgoingRows
+      outgoingRows,
+      stakeEventRows
     );
     console.log(
-      "[navio-audit] Synced to tip %s, %d outgoing payout(s), balance %s sat",
+      "[navio-audit] Synced to tip %s, %d outgoing payout(s), %d stake event(s), balance %s sat",
       tip,
       outgoingRows.length,
+      stakeEventRows.length,
       balanceSat
     );
   } catch (err) {

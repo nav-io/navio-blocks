@@ -3,6 +3,7 @@ import { queryAll, queryOne, queryScalar } from '../db.js';
 import { currentNetwork } from '../context.js';
 import type {
   NavioBridgeAuditOutgoing,
+  NavioBridgeAuditStakeEvent,
   NavioBridgeAuditSummary,
   PaginatedResponse,
   WrappedNavcoinBurn,
@@ -23,11 +24,20 @@ function auditTablesReady(): boolean {
   return row !== undefined;
 }
 
+function stakeEventsTableReady(): boolean {
+  const row = queryOne<{ name: string }>(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'navio_audit_stake_events'`
+  );
+  return row !== undefined;
+}
+
 interface BridgeAuditSummaryResponse {
   indexed: boolean;
   summary: NavioBridgeAuditSummary | null;
   /** Sum of outgoing payout amounts (NAV sats), decimal string. */
   total_outgoing_sat: string;
+  /** Net currently-staked amount (stakes minus unstakes), NAV sats, decimal string. */
+  net_staked_sat: string;
 }
 
 export default async function bridgeRoutes(app: FastifyInstance) {
@@ -134,13 +144,13 @@ export default async function bridgeRoutes(app: FastifyInstance) {
     },
   }, async (): Promise<BridgeAuditSummaryResponse> => {
     if (!auditTablesReady()) {
-      return { indexed: false, summary: null, total_outgoing_sat: '0' };
+      return { indexed: false, summary: null, total_outgoing_sat: '0', net_staked_sat: '0' };
     }
     const meta = queryOne<NavioBridgeAuditSummary>(
       `SELECT balance_sat, synced_height, chain_tip, error_message, updated_at FROM navio_audit_meta WHERE id = 1`
     );
     if (!meta || meta.updated_at === 0) {
-      return { indexed: false, summary: meta ?? null, total_outgoing_sat: '0' };
+      return { indexed: false, summary: meta ?? null, total_outgoing_sat: '0', net_staked_sat: '0' };
     }
     const amounts = queryAll<{ amount_sat: string }>(
       `SELECT amount_sat FROM navio_audit_outgoing`
@@ -148,10 +158,21 @@ export default async function bridgeRoutes(app: FastifyInstance) {
     const totalOutgoing = amounts
       .reduce((a, r) => a + BigInt(r.amount_sat), 0n)
       .toString();
+    let netStaked = 0n;
+    if (stakeEventsTableReady()) {
+      const stakeRows = queryAll<{ event_type: string; amount_sat: string }>(
+        `SELECT event_type, amount_sat FROM navio_audit_stake_events`
+      );
+      netStaked = stakeRows.reduce(
+        (a, r) => a + (r.event_type === 'stake' ? BigInt(r.amount_sat) : -BigInt(r.amount_sat)),
+        0n
+      );
+    }
     return {
       indexed: true,
       summary: meta,
       total_outgoing_sat: totalOutgoing,
+      net_staked_sat: netStaked.toString(),
     };
   });
 
@@ -189,6 +210,51 @@ export default async function bridgeRoutes(app: FastifyInstance) {
        LIMIT ? OFFSET ?`,
       limit,
       offset,
+    );
+
+    return { data: rows, total, limit, offset };
+  });
+
+  app.get<{
+    Querystring: { limit?: number; offset?: number; type?: 'stake' | 'unstake' };
+  }>('/bridge/audit/stakes', {
+    schema: {
+      tags: ['Bridge'],
+      summary: 'Stake / unstake events on the audited bridge wallet',
+      description:
+        'Staked-commitment lock (`stake`) and unlock (`unstake`) events for the audited wallet, derived by cross-referencing the explorer’s staked-commitment outputs with the audit wallet’s owned outputs.',
+      querystring: {
+        type: 'object',
+        properties: {
+          limit: { type: 'integer', minimum: 1, maximum: 500, default: 50 },
+          offset: { type: 'integer', minimum: 0, default: 0 },
+          type: { type: 'string', enum: ['stake', 'unstake'] },
+        },
+      },
+      response: { 200: { type: 'object', additionalProperties: true } },
+    },
+  }, async (request): Promise<PaginatedResponse<NavioBridgeAuditStakeEvent>> => {
+    const limit = request.query.limit ?? 50;
+    const offset = request.query.offset ?? 0;
+    const type = request.query.type;
+
+    if (!stakeEventsTableReady()) {
+      return { data: [], total: 0, limit, offset };
+    }
+
+    const where = type ? `WHERE event_type = ?` : '';
+    const countArgs = type ? [type] : [];
+    const total = queryScalar<number>(
+      `SELECT COUNT(*) FROM navio_audit_stake_events ${where}`,
+      ...countArgs,
+    );
+
+    const rows = queryAll<NavioBridgeAuditStakeEvent>(
+      `SELECT tx_hash, event_type, block_height, amount_sat
+       FROM navio_audit_stake_events ${where}
+       ORDER BY block_height DESC, tx_hash DESC
+       LIMIT ? OFFSET ?`,
+      ...(type ? [type, limit, offset] : [limit, offset]),
     );
 
     return { data: rows, total, limit, offset };

@@ -344,6 +344,14 @@ export interface NavioBridgeAuditOutgoing {
   amount_sat: string;
 }
 
+/** A stake (commitment locked) or unstake (commitment unlocked) event on the audited wallet. */
+export interface NavioBridgeAuditStakeEvent {
+  tx_hash: string;
+  event_type: 'stake' | 'unstake';
+  block_height: number;
+  amount_sat: string;
+}
+
 export type TokenKind = 'token' | 'nft' | 'unknown';
 
 export interface TokenMetadataEntry {

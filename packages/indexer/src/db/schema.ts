@@ -175,6 +175,16 @@ export function initDatabase(dbPath: string): Database.Database {
 
     CREATE INDEX IF NOT EXISTS idx_navio_audit_outgoing_block ON navio_audit_outgoing(block_height DESC);
 
+    CREATE TABLE IF NOT EXISTS navio_audit_stake_events (
+      tx_hash TEXT NOT NULL,
+      event_type TEXT NOT NULL,    -- 'stake' (commitment created) | 'unstake' (commitment spent without re-staking)
+      block_height INTEGER NOT NULL,
+      amount_sat TEXT NOT NULL,
+      PRIMARY KEY (tx_hash, event_type)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_navio_audit_stake_events_block ON navio_audit_stake_events(block_height DESC);
+
     CREATE TABLE IF NOT EXISTS navio_audit_meta (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       balance_sat TEXT NOT NULL DEFAULT '0',

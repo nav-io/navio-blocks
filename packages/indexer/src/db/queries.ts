@@ -26,6 +26,13 @@ export interface NavioAuditOutgoingRow {
   amount_sat: string;
 }
 
+export interface NavioAuditStakeEventRow {
+  tx_hash: string;
+  event_type: "stake" | "unstake";
+  block_height: number;
+  amount_sat: string;
+}
+
 export interface NavioAuditMetaRow {
   balance_sat: string;
   synced_height: number;
@@ -73,6 +80,11 @@ export class Queries {
   private stmtGetNavioAuditMeta;
   private stmtListNavioAuditOutgoing;
   private stmtCountNavioAuditOutgoing;
+  private stmtDeleteAllNavioAuditStakeEvents;
+  private stmtInsertNavioAuditStakeEvent;
+  private stmtListNavioAuditStakeEvents;
+  private stmtCountNavioAuditStakeEvents;
+  private stmtListStakeOutputKeys;
 
   constructor(private db: Database.Database) {
     this.stmtInsertBlock = db.prepare(`
@@ -276,6 +288,32 @@ export class Queries {
       `SELECT COUNT(*) AS count FROM navio_audit_outgoing`
     );
 
+    this.stmtDeleteAllNavioAuditStakeEvents = db.prepare(
+      `DELETE FROM navio_audit_stake_events`
+    );
+
+    this.stmtInsertNavioAuditStakeEvent = db.prepare(`
+      INSERT OR REPLACE INTO navio_audit_stake_events (tx_hash, event_type, block_height, amount_sat)
+      VALUES (@tx_hash, @event_type, @block_height, @amount_sat)
+    `);
+
+    this.stmtListNavioAuditStakeEvents = db.prepare(`
+      SELECT tx_hash, event_type, block_height, amount_sat
+      FROM navio_audit_stake_events
+      ORDER BY block_height DESC, tx_hash DESC
+      LIMIT ? OFFSET ?
+    `);
+
+    this.stmtCountNavioAuditStakeEvents = db.prepare(
+      `SELECT COUNT(*) AS count FROM navio_audit_stake_events`
+    );
+
+    // (txid:n) of every output the explorer has classified as a staked
+    // commitment. Used by the audit sync to tag which owned outputs are stakes.
+    this.stmtListStakeOutputKeys = db.prepare(
+      `SELECT txid, n FROM outputs WHERE output_type = 'stake'`
+    );
+
     this.stmtGetBlockSupply = db.prepare(
       `SELECT * FROM block_supply WHERE height = ?`
     );
@@ -406,25 +444,55 @@ export class Queries {
     return row ?? null;
   }
 
-  replaceNavioAuditData(meta: NavioAuditMetaRow, outgoing: NavioAuditOutgoingRow[]): void {
-    const run = this.db.transaction((m: NavioAuditMetaRow, rows: NavioAuditOutgoingRow[]) => {
-      this.stmtDeleteAllNavioAuditOutgoing.run();
-      for (const r of rows) {
-        this.stmtInsertNavioAuditOutgoing.run({
-          spend_tx_hash: r.spend_tx_hash,
-          block_height: r.block_height,
-          amount_sat: r.amount_sat,
+  replaceNavioAuditData(
+    meta: NavioAuditMetaRow,
+    outgoing: NavioAuditOutgoingRow[],
+    stakeEvents: NavioAuditStakeEventRow[] = []
+  ): void {
+    const run = this.db.transaction(
+      (m: NavioAuditMetaRow, rows: NavioAuditOutgoingRow[], stakes: NavioAuditStakeEventRow[]) => {
+        this.stmtDeleteAllNavioAuditOutgoing.run();
+        for (const r of rows) {
+          this.stmtInsertNavioAuditOutgoing.run({
+            spend_tx_hash: r.spend_tx_hash,
+            block_height: r.block_height,
+            amount_sat: r.amount_sat,
+          });
+        }
+        this.stmtDeleteAllNavioAuditStakeEvents.run();
+        for (const s of stakes) {
+          this.stmtInsertNavioAuditStakeEvent.run({
+            tx_hash: s.tx_hash,
+            event_type: s.event_type,
+            block_height: s.block_height,
+            amount_sat: s.amount_sat,
+          });
+        }
+        this.stmtUpsertNavioAuditMeta.run({
+          balance_sat: m.balance_sat,
+          synced_height: m.synced_height,
+          chain_tip: m.chain_tip,
+          error_message: m.error_message,
+          updated_at: m.updated_at,
         });
       }
-      this.stmtUpsertNavioAuditMeta.run({
-        balance_sat: m.balance_sat,
-        synced_height: m.synced_height,
-        chain_tip: m.chain_tip,
-        error_message: m.error_message,
-        updated_at: m.updated_at,
-      });
-    });
-    run(meta, outgoing);
+    );
+    run(meta, outgoing, stakeEvents);
+  }
+
+  /** Set of "txid:n" for every output the explorer classified as a stake. */
+  stakeOutputKeys(): Set<string> {
+    const rows = this.stmtListStakeOutputKeys.all() as { txid: string; n: number }[];
+    return new Set(rows.map((r) => `${r.txid}:${r.n}`));
+  }
+
+  listNavioAuditStakeEvents(limit: number, offset: number): NavioAuditStakeEventRow[] {
+    return this.stmtListNavioAuditStakeEvents.all(limit, offset) as NavioAuditStakeEventRow[];
+  }
+
+  countNavioAuditStakeEvents(): number {
+    const row = this.stmtCountNavioAuditStakeEvents.get() as { count: number } | undefined;
+    return row?.count ?? 0;
   }
 
   recordNavioAuditFailure(message: string): void {
