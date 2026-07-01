@@ -85,6 +85,8 @@ export class Queries {
   private stmtListNavioAuditStakeEvents;
   private stmtCountNavioAuditStakeEvents;
   private stmtListStakeOutputKeys;
+  private stmtStakeTxids;
+  private stmtUnstakeTxids;
 
   constructor(private db: Database.Database) {
     this.stmtInsertBlock = db.prepare(`
@@ -314,6 +316,18 @@ export class Queries {
       `SELECT txid, n FROM outputs WHERE output_type = 'stake'`
     );
 
+    // Txs that CREATE a staked commitment (a stakelock / re-stake).
+    this.stmtStakeTxids = db.prepare(
+      `SELECT DISTINCT txid FROM outputs WHERE output_type = 'stake'`
+    );
+
+    // Txs that SPEND a staked commitment (a stakeunlock / re-stake).
+    this.stmtUnstakeTxids = db.prepare(
+      `SELECT DISTINCT i.txid AS txid
+       FROM inputs i JOIN outputs o ON i.prev_out = o.output_hash
+       WHERE o.output_type = 'stake'`
+    );
+
     this.stmtGetBlockSupply = db.prepare(
       `SELECT * FROM block_supply WHERE height = ?`
     );
@@ -484,6 +498,18 @@ export class Queries {
   stakeOutputKeys(): Set<string> {
     const rows = this.stmtListStakeOutputKeys.all() as { txid: string; n: number }[];
     return new Set(rows.map((r) => `${r.txid}:${r.n}`));
+  }
+
+  /** Txids that create a staked commitment (stakelock / re-stake). */
+  stakeTxids(): Set<string> {
+    const rows = this.stmtStakeTxids.all() as { txid: string }[];
+    return new Set(rows.map((r) => r.txid));
+  }
+
+  /** Txids that spend a staked commitment (stakeunlock / re-stake). */
+  unstakeTxids(): Set<string> {
+    const rows = this.stmtUnstakeTxids.all() as { txid: string }[];
+    return new Set(rows.map((r) => r.txid));
   }
 
   listNavioAuditStakeEvents(limit: number, offset: number): NavioAuditStakeEventRow[] {

@@ -3,21 +3,9 @@
  * Run: npm -w packages/indexer test   (tsx, no framework — throws on failure)
  */
 import assert from "node:assert/strict";
-import { deriveStakeEvents, type OwnedOutputLite } from "./stakeEvents.js";
+import { deriveStakeEvents } from "./stakeEvents.js";
 import { initDatabase } from "../db/schema.js";
 import { Queries } from "../db/queries.js";
-
-function out(p: Partial<OwnedOutputLite> & { txHash: string; outputIndex: number }): OwnedOutputLite {
-  return {
-    blockHeight: 100,
-    amount: 10_000n,
-    tokenId: null,
-    isSpent: false,
-    spentTxHash: null,
-    spentBlockHeight: null,
-    ...p,
-  };
-}
 
 let passed = 0;
 function check(name: string, fn: () => void) {
@@ -27,98 +15,95 @@ function check(name: string, fn: () => void) {
 }
 
 // --- deriveStakeEvents ------------------------------------------------------
-const stakeKeys = new Set(["t1:0", "t2:0", "c1:0", "c2:0"]);
-
-check("two separate stakes + one genuine unstake", () => {
-  const events = deriveStakeEvents(
-    [
-      out({ txHash: "t1", outputIndex: 0, blockHeight: 102 }),
-      out({ txHash: "t2", outputIndex: 0, blockHeight: 103, isSpent: true, spentTxHash: "u1", spentBlockHeight: 120 }),
-    ],
-    stakeKeys
-  );
-  const stakes = events.filter((e) => e.event_type === "stake");
-  const unstakes = events.filter((e) => e.event_type === "unstake");
-  assert.equal(stakes.length, 2, "two stake events");
-  assert.equal(unstakes.length, 1, "one unstake event");
-  assert.equal(unstakes[0].tx_hash, "u1");
-  assert.equal(unstakes[0].amount_sat, "10000");
-  assert.equal(unstakes[0].block_height, 120);
+check("stakelock outflow becomes a stake event and leaves the payout list", () => {
+  const { events, excludeFromOutgoing } = deriveStakeEvents({
+    spentByTx: new Map([
+      // a stakelock: 10000 + fee left the wallet into a commitment
+      ["stakeTx", { inputs: 1_000_000_412_250n, changeOut: 0n, block: 104 }],
+      // an ordinary payout: not a stake tx
+      ["payTx", { inputs: 4_242_600_000n, changeOut: 0n, block: 110 }],
+    ]),
+    receivedByTx: new Map(),
+    stakeTxids: new Set(["stakeTx"]),
+    unstakeTxids: new Set(),
+  });
+  assert.equal(events.length, 1);
+  assert.equal(events[0].event_type, "stake");
+  assert.equal(events[0].tx_hash, "stakeTx");
+  assert.equal(events[0].amount_sat, "1000000412250");
+  assert.equal(events[0].block_height, 104);
+  assert.ok(excludeFromOutgoing.has("stakeTx"), "stake tx excluded from payouts");
+  assert.ok(!excludeFromOutgoing.has("payTx"), "real payout kept");
 });
 
-check("consolidation / re-stake is NOT an unstake", () => {
-  // c1 spent by c2, and c2 itself creates a new owned stake -> re-stake.
-  const events = deriveStakeEvents(
-    [
-      out({ txHash: "c1", outputIndex: 0, isSpent: true, spentTxHash: "c2", spentBlockHeight: 130 }),
-      out({ txHash: "c2", outputIndex: 0, amount: 20_000n }),
-    ],
-    stakeKeys
-  );
-  assert.equal(events.filter((e) => e.event_type === "unstake").length, 0, "no unstake on re-stake");
-  assert.equal(events.filter((e) => e.event_type === "stake").length, 2, "two stake events");
+check("stakeunlock inflow becomes an unstake event", () => {
+  const { events, excludeFromOutgoing } = deriveStakeEvents({
+    spentByTx: new Map(),
+    receivedByTx: new Map([["unlockTx", { amount: 999_999_700_000n, block: 130 }]]),
+    stakeTxids: new Set(),
+    unstakeTxids: new Set(["unlockTx"]),
+  });
+  assert.equal(events.length, 1);
+  assert.equal(events[0].event_type, "unstake");
+  assert.equal(events[0].tx_hash, "unlockTx");
+  assert.equal(events[0].amount_sat, "999999700000");
+  assert.equal(excludeFromOutgoing.size, 0, "unstake is an inflow, not a payout");
 });
 
-check("token + non-stake outputs are ignored", () => {
-  const events = deriveStakeEvents(
-    [
-      out({ txHash: "t1", outputIndex: 0, tokenId: "deadbeef" }), // token: ignored even though key matches
-      out({ txHash: "zz", outputIndex: 9 }), // not in stakeKeys: ignored
-    ],
-    stakeKeys
-  );
+check("non-stake flows produce nothing", () => {
+  const { events } = deriveStakeEvents({
+    spentByTx: new Map([["p", { inputs: 5n, changeOut: 1n, block: 1 }]]),
+    receivedByTx: new Map([["r", { amount: 3n, block: 1 }]]),
+    stakeTxids: new Set(),
+    unstakeTxids: new Set(),
+  });
   assert.equal(events.length, 0);
 });
 
-check("amounts from same tx are summed", () => {
-  const keys = new Set(["m1:0", "m1:1"]);
-  const events = deriveStakeEvents(
-    [
-      out({ txHash: "m1", outputIndex: 0, amount: 10_000n }),
-      out({ txHash: "m1", outputIndex: 1, amount: 5_000n }),
-    ],
-    keys
-  );
-  assert.equal(events.length, 1);
-  assert.equal(events[0].amount_sat, "15000");
+check("zero / negative net outflow is ignored", () => {
+  const { events } = deriveStakeEvents({
+    spentByTx: new Map([["s", { inputs: 10n, changeOut: 10n, block: 1 }]]),
+    receivedByTx: new Map(),
+    stakeTxids: new Set(["s"]),
+    unstakeTxids: new Set(),
+  });
+  assert.equal(events.length, 0);
 });
 
-// --- queries persistence round-trip ----------------------------------------
-check("stakeOutputKeys + replace/list round-trip", () => {
+// --- queries: stake/unstake txid sets + persistence round-trip --------------
+check("stakeTxids / unstakeTxids + replace/list round-trip", () => {
   const db = initDatabase(":memory:");
   const q = new Queries(db);
 
   const insOut = db.prepare(
     `INSERT INTO outputs (output_hash, txid, n, output_type) VALUES (?, ?, ?, ?)`
   );
-  insOut.run("h1", "t1", 0, "stake");
-  insOut.run("h2", "t2", 0, "stake");
-  insOut.run("h3", "t3", 0, "transfer");
+  // stakelock stakeTx created stake output h_stake (vout 2)
+  insOut.run("h_stake", "stakeTx", 2, "stake");
+  insOut.run("h_change", "stakeTx", 0, "transfer");
+  // unlockTx later spends h_stake
+  const insIn = db.prepare(`INSERT INTO inputs (txid, vin, prev_out) VALUES (?, ?, ?)`);
+  insIn.run("unlockTx", 0, "h_stake");
 
-  const keys = q.stakeOutputKeys();
-  assert.ok(keys.has("t1:0") && keys.has("t2:0"));
-  assert.ok(!keys.has("t3:0"), "non-stake output excluded");
+  assert.deepEqual([...q.stakeTxids()], ["stakeTx"]);
+  assert.deepEqual([...q.unstakeTxids()], ["unlockTx"]);
 
-  const meta = {
-    balance_sat: "0",
-    synced_height: 5,
-    chain_tip: 5,
-    error_message: null,
-    updated_at: 1,
-  };
-  const stakeEvents = deriveStakeEvents(
-    [out({ txHash: "t1", outputIndex: 0, blockHeight: 102 })],
-    keys
-  );
-  q.replaceNavioAuditData(meta, [], stakeEvents);
+  const meta = { balance_sat: "0", synced_height: 5, chain_tip: 5, error_message: null, updated_at: 1 };
+  const { events } = deriveStakeEvents({
+    spentByTx: new Map([["stakeTx", { inputs: 1_000_000_412_250n, changeOut: 0n, block: 104 }]]),
+    receivedByTx: new Map([["unlockTx", { amount: 999_999_700_000n, block: 130 }]]),
+    stakeTxids: q.stakeTxids(),
+    unstakeTxids: q.unstakeTxids(),
+  });
+  assert.equal(events.length, 2);
+  q.replaceNavioAuditData(meta, [], events);
 
   const listed = q.listNavioAuditStakeEvents(50, 0);
-  assert.equal(listed.length, 1);
-  assert.equal(listed[0].event_type, "stake");
-  assert.equal(listed[0].tx_hash, "t1");
-  assert.equal(q.countNavioAuditStakeEvents(), 1);
+  assert.equal(listed.length, 2);
+  assert.equal(q.countNavioAuditStakeEvents(), 2);
+  assert.equal(listed[0].event_type, "unstake"); // higher block first
+  assert.equal(listed[1].event_type, "stake");
 
-  // Replacing with an empty set clears prior rows.
   q.replaceNavioAuditData(meta, [], []);
   assert.equal(q.countNavioAuditStakeEvents(), 0);
   db.close();

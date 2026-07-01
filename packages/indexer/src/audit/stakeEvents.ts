@@ -1,75 +1,81 @@
 import type { NavioAuditStakeEventRow } from "../db/queries.js";
 
-/** Minimal owned-output shape needed to derive stake events (subset of the SDK's WalletOutput). */
-export interface OwnedOutputLite {
-  txHash: string;
-  outputIndex: number;
-  blockHeight: number;
-  amount: bigint | number | string;
-  tokenId: string | null;
-  isSpent: boolean;
-  spentTxHash: string | null;
-  spentBlockHeight: number | null;
+/** Per-tx outflow the audit wallet incurred (owned inputs spent, minus owned change received back). */
+export interface SpentFlow {
+  inputs: bigint;
+  changeOut: bigint;
+  block: number;
 }
 
-function toBigint(a: bigint | number | string): bigint {
-  if (typeof a === "bigint") return a;
-  if (typeof a === "number") return BigInt(Math.trunc(a));
-  return BigInt(a);
+/** Per-tx inflow the audit wallet received. */
+export interface ReceivedFlow {
+  amount: bigint;
+  block: number;
+}
+
+export interface DeriveStakeEventsInput {
+  /** Txid -> outflow, keyed by the tx that spent the wallet's outputs. */
+  spentByTx: Map<string, SpentFlow>;
+  /** Txid -> inflow, keyed by the tx that produced the wallet's outputs. */
+  receivedByTx: Map<string, ReceivedFlow>;
+  /** Txids that CREATE a staked commitment (from the explorer's block sync). */
+  stakeTxids: Set<string>;
+  /** Txids that SPEND a staked commitment (from the explorer's block sync). */
+  unstakeTxids: Set<string>;
+}
+
+export interface DeriveStakeEventsResult {
+  events: NavioAuditStakeEventRow[];
+  /**
+   * Txids that are stake operations and must be removed from the outgoing
+   * payout list — a stakelock spends the wallet's coins into a commitment the
+   * (view-only) audit wallet does not own, so it otherwise looks like a payout.
+   */
+  excludeFromOutgoing: Set<string>;
 }
 
 /**
  * Derive stake / unstake events for an audited wallet.
  *
- * @param outputs   the wallet's owned outputs (from the audit-key sync)
- * @param stakeKeys set of "txid:n" the explorer classified as staked commitments
+ * The audit (view-only) wallet does NOT own the staked-commitment output
+ * itself, so we cannot detect stakes by owned-output type. Instead we combine:
+ *   - the explorer's block sync, which knows which txs create (`stakeTxids`)
+ *     and spend (`unstakeTxids`) staked commitments, and
+ *   - the audit wallet's value flow, which supplies the amounts.
  *
- * An owned staked-commitment output is a `stake` event on the tx that created
- * it. When such an output is later spent by a tx that does NOT itself create a
- * new owned stake (a genuine unlock, not a consolidation / re-stake), that spend
- * is an `unstake` event. Amounts are summed per tx; native coin only (tokens are
- * never staked commitments).
+ * A tx that creates a stake AND drew coins out of the wallet is a `stake` of
+ * `inputs - changeOut`. A tx that spends a stake AND paid coins into the wallet
+ * is an `unstake` of `received`.
  */
-export function deriveStakeEvents(
-  outputs: OwnedOutputLite[],
-  stakeKeys: Set<string>
-): NavioAuditStakeEventRow[] {
-  const ownedStakeOutputs = outputs.filter(
-    (o) => !o.tokenId && stakeKeys.has(`${o.txHash}:${o.outputIndex}`)
-  );
-  const stakeTxs = new Set(ownedStakeOutputs.map((o) => o.txHash));
+export function deriveStakeEvents(input: DeriveStakeEventsInput): DeriveStakeEventsResult {
+  const { spentByTx, receivedByTx, stakeTxids, unstakeTxids } = input;
+  const events: NavioAuditStakeEventRow[] = [];
+  const excludeFromOutgoing = new Set<string>();
 
-  const stakeByTx = new Map<string, { block: number; amount: bigint }>();
-  const unstakeByTx = new Map<string, { block: number; amount: bigint }>();
-
-  for (const o of ownedStakeOutputs) {
-    const amt = toBigint(o.amount);
-    const s = stakeByTx.get(o.txHash) ?? { block: o.blockHeight, amount: 0n };
-    s.amount += amt;
-    stakeByTx.set(o.txHash, s);
-
-    if (o.isSpent && o.spentTxHash && !stakeTxs.has(o.spentTxHash)) {
-      const u = unstakeByTx.get(o.spentTxHash) ?? {
-        block: o.spentBlockHeight ?? 0,
-        amount: 0n,
-      };
-      u.amount += amt;
-      unstakeByTx.set(o.spentTxHash, u);
-    }
+  for (const [txid, flow] of spentByTx) {
+    if (!stakeTxids.has(txid)) continue;
+    const amount = flow.inputs - flow.changeOut;
+    if (amount <= 0n) continue;
+    events.push({
+      tx_hash: txid,
+      event_type: "stake",
+      block_height: flow.block,
+      amount_sat: amount.toString(),
+    });
+    excludeFromOutgoing.add(txid);
   }
 
-  return [
-    ...[...stakeByTx.entries()].map(([hash, e]) => ({
-      tx_hash: hash,
-      event_type: "stake" as const,
-      block_height: e.block,
-      amount_sat: e.amount.toString(),
-    })),
-    ...[...unstakeByTx.entries()].map(([hash, e]) => ({
-      tx_hash: hash,
-      event_type: "unstake" as const,
-      block_height: e.block,
-      amount_sat: e.amount.toString(),
-    })),
-  ].sort((a, b) => b.block_height - a.block_height);
+  for (const [txid, flow] of receivedByTx) {
+    if (!unstakeTxids.has(txid)) continue;
+    if (flow.amount <= 0n) continue;
+    events.push({
+      tx_hash: txid,
+      event_type: "unstake",
+      block_height: flow.block,
+      amount_sat: flow.amount.toString(),
+    });
+  }
+
+  events.sort((a, b) => b.block_height - a.block_height);
+  return { events, excludeFromOutgoing };
 }

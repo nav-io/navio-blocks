@@ -126,13 +126,15 @@ export async function syncNavioAuditWallet(
       string,
       { inputs: bigint; changeOut: bigint; block: number }
     >();
-    const receivedByTx = new Map<string, bigint>();
+    const receivedByTx = new Map<string, { amount: bigint; block: number }>();
 
     for (const o of outputs) {
       if (!o.tokenId) {
         const amt = outAmount(o);
-        const prev = receivedByTx.get(o.txHash) ?? 0n;
-        receivedByTx.set(o.txHash, prev + amt);
+        const prev = receivedByTx.get(o.txHash) ?? { amount: 0n, block: o.blockHeight ?? 0 };
+        prev.amount += amt;
+        if (o.blockHeight) prev.block = o.blockHeight;
+        receivedByTx.set(o.txHash, prev);
         if (o.isSpent && o.spentTxHash) {
           const e = spentBySpendTx.get(o.spentTxHash) ?? {
             inputs: 0n,
@@ -148,10 +150,22 @@ export async function syncNavioAuditWallet(
 
     for (const spendTx of spentBySpendTx.keys()) {
       const entry = spentBySpendTx.get(spendTx)!;
-      entry.changeOut = receivedByTx.get(spendTx) ?? 0n;
+      entry.changeOut = receivedByTx.get(spendTx)?.amount ?? 0n;
     }
 
+    // Stake / unstake events. The audit (view-only) wallet doesn't own the
+    // staked-commitment output, so a stakelock otherwise looks like an outgoing
+    // payout. Use the explorer's block sync (which txs create/spend stakes) to
+    // reclassify those flows and pull them out of the payout list.
+    const { events: stakeEventRows, excludeFromOutgoing } = deriveStakeEvents({
+      spentByTx: spentBySpendTx,
+      receivedByTx,
+      stakeTxids: queries.stakeTxids(),
+      unstakeTxids: queries.unstakeTxids(),
+    });
+
     const outgoingRows = [...spentBySpendTx.entries()]
+      .filter(([hash]) => !excludeFromOutgoing.has(hash))
       .map(([hash, e]) => ({
         spend_tx_hash: hash,
         block_height: e.block,
@@ -159,12 +173,6 @@ export async function syncNavioAuditWallet(
       }))
       .filter((r) => BigInt(r.amount_sat) > 0n)
       .sort((a, b) => b.block_height - a.block_height);
-
-    // Stake / unstake events. The explorer's block sync already tags staked
-    // commitment outputs (output_type='stake'); cross-reference the audit
-    // wallet's owned outputs against that set (see deriveStakeEvents).
-    const stakeKeys = queries.stakeOutputKeys();
-    const stakeEventRows = deriveStakeEvents(outputs, stakeKeys);
 
     const balanceSat =
       typeof bal === "bigint" ? bal.toString() : String(bal);
