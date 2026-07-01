@@ -147,7 +147,7 @@ export default async function bridgeRoutes(app: FastifyInstance) {
       return { indexed: false, summary: null, total_outgoing_sat: '0', net_staked_sat: '0' };
     }
     const meta = queryOne<NavioBridgeAuditSummary>(
-      `SELECT balance_sat, synced_height, chain_tip, error_message, updated_at FROM navio_audit_meta WHERE id = 1`
+      `SELECT balance_sat, earned_rewards_sat, synced_height, chain_tip, error_message, updated_at FROM navio_audit_meta WHERE id = 1`
     );
     if (!meta || meta.updated_at === 0) {
       return { indexed: false, summary: meta ?? null, total_outgoing_sat: '0', net_staked_sat: '0' };

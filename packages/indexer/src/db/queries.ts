@@ -35,6 +35,8 @@ export interface NavioAuditStakeEventRow {
 
 export interface NavioAuditMetaRow {
   balance_sat: string;
+  /** Cumulative staking rewards earned (owned coinbase outputs from PoS blocks), sats. */
+  earned_rewards_sat: string;
   synced_height: number;
   chain_tip: number;
   error_message: string | null;
@@ -87,6 +89,7 @@ export class Queries {
   private stmtListStakeOutputKeys;
   private stmtStakeTxids;
   private stmtUnstakeTxids;
+  private stmtCoinbaseRewardTxids;
 
   constructor(private db: Database.Database) {
     this.stmtInsertBlock = db.prepare(`
@@ -270,13 +273,13 @@ export class Queries {
 
     this.stmtUpsertNavioAuditMeta = db.prepare(`
       INSERT OR REPLACE INTO navio_audit_meta
-        (id, balance_sat, synced_height, chain_tip, error_message, updated_at)
+        (id, balance_sat, earned_rewards_sat, synced_height, chain_tip, error_message, updated_at)
       VALUES
-        (1, @balance_sat, @synced_height, @chain_tip, @error_message, @updated_at)
+        (1, @balance_sat, @earned_rewards_sat, @synced_height, @chain_tip, @error_message, @updated_at)
     `);
 
     this.stmtGetNavioAuditMeta = db.prepare(
-      `SELECT balance_sat, synced_height, chain_tip, error_message, updated_at FROM navio_audit_meta WHERE id = 1`
+      `SELECT balance_sat, earned_rewards_sat, synced_height, chain_tip, error_message, updated_at FROM navio_audit_meta WHERE id = 1`
     );
 
     this.stmtListNavioAuditOutgoing = db.prepare(`
@@ -326,6 +329,13 @@ export class Queries {
       `SELECT DISTINCT i.txid AS txid
        FROM inputs i JOIN outputs o ON i.prev_out = o.output_hash
        WHERE o.output_type = 'stake'`
+    );
+
+    // Coinbase reward txs above block 1 (block 1 mints the whole supply; PoW
+    // blocks 2..nLastPOWHeight carry 0 reward; PoS blocks pay the staker). The
+    // audit wallet's owned outputs in these are its earned staking rewards.
+    this.stmtCoinbaseRewardTxids = db.prepare(
+      `SELECT txid FROM transactions WHERE is_coinbase = 1 AND block_height > 1`
     );
 
     this.stmtGetBlockSupply = db.prepare(
@@ -484,6 +494,7 @@ export class Queries {
         }
         this.stmtUpsertNavioAuditMeta.run({
           balance_sat: m.balance_sat,
+          earned_rewards_sat: m.earned_rewards_sat,
           synced_height: m.synced_height,
           chain_tip: m.chain_tip,
           error_message: m.error_message,
@@ -512,6 +523,12 @@ export class Queries {
     return new Set(rows.map((r) => r.txid));
   }
 
+  /** Coinbase reward txids above block 1 (staking-reward txs). */
+  coinbaseRewardTxids(): Set<string> {
+    const rows = this.stmtCoinbaseRewardTxids.all() as { txid: string }[];
+    return new Set(rows.map((r) => r.txid));
+  }
+
   listNavioAuditStakeEvents(limit: number, offset: number): NavioAuditStakeEventRow[] {
     return this.stmtListNavioAuditStakeEvents.all(limit, offset) as NavioAuditStakeEventRow[];
   }
@@ -526,6 +543,7 @@ export class Queries {
     const cur = this.getNavioAuditMeta();
     this.stmtUpsertNavioAuditMeta.run({
       balance_sat: cur?.balance_sat ?? "0",
+      earned_rewards_sat: cur?.earned_rewards_sat ?? "0",
       synced_height: cur?.synced_height ?? 0,
       chain_tip: cur?.chain_tip ?? 0,
       error_message: message,

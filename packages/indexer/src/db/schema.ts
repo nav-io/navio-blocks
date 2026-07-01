@@ -188,6 +188,7 @@ export function initDatabase(dbPath: string): Database.Database {
     CREATE TABLE IF NOT EXISTS navio_audit_meta (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       balance_sat TEXT NOT NULL DEFAULT '0',
+      earned_rewards_sat TEXT NOT NULL DEFAULT '0',
       synced_height INTEGER NOT NULL DEFAULT 0,
       chain_tip INTEGER NOT NULL DEFAULT 0,
       error_message TEXT,
@@ -199,6 +200,7 @@ export function initDatabase(dbPath: string): Database.Database {
   ensureColumn(db, "transactions", "raw_json", "TEXT");
   ensureColumn(db, "blocks", "is_blsct", "INTEGER DEFAULT 0");
   ensureColumn(db, "outputs", "output_type", "TEXT DEFAULT 'unknown'");
+  ensureColumn(db, "navio_audit_meta", "earned_rewards_sat", "TEXT NOT NULL DEFAULT '0'");
   ensureColumn(db, "outputs", "spk_type", "TEXT");
   ensureColumn(db, "outputs", "spk_hex", "TEXT");
   ensureColumn(db, "outputs", "token_id", "TEXT");

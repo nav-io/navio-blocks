@@ -88,7 +88,7 @@ check("stakeTxids / unstakeTxids + replace/list round-trip", () => {
   assert.deepEqual([...q.stakeTxids()], ["stakeTx"]);
   assert.deepEqual([...q.unstakeTxids()], ["unlockTx"]);
 
-  const meta = { balance_sat: "0", synced_height: 5, chain_tip: 5, error_message: null, updated_at: 1 };
+  const meta = { balance_sat: "0", earned_rewards_sat: "0", synced_height: 5, chain_tip: 5, error_message: null, updated_at: 1 };
   const { events } = deriveStakeEvents({
     spentByTx: new Map([["stakeTx", { inputs: 1_000_000_412_250n, changeOut: 0n, block: 104 }]]),
     receivedByTx: new Map([["unlockTx", { amount: 999_999_700_000n, block: 130 }]]),

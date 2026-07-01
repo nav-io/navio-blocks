@@ -128,9 +128,15 @@ export async function syncNavioAuditWallet(
     >();
     const receivedByTx = new Map<string, { amount: bigint; block: number }>();
 
+    // Earned staking rewards = owned coinbase outputs from PoS blocks (the
+    // explorer flags coinbase txs; block 1's whole-supply mint is excluded).
+    const rewardTxids = queries.coinbaseRewardTxids();
+    let earnedRewardsSat = 0n;
+
     for (const o of outputs) {
       if (!o.tokenId) {
         const amt = outAmount(o);
+        if (rewardTxids.has(o.txHash)) earnedRewardsSat += amt;
         const prev = receivedByTx.get(o.txHash) ?? { amount: 0n, block: o.blockHeight ?? 0 };
         prev.amount += amt;
         if (o.blockHeight) prev.block = o.blockHeight;
@@ -181,6 +187,7 @@ export async function syncNavioAuditWallet(
     queries.replaceNavioAuditData(
       {
         balance_sat: balanceSat,
+        earned_rewards_sat: earnedRewardsSat.toString(),
         synced_height: tip,
         chain_tip: tip,
         error_message: null,
