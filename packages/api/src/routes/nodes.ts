@@ -100,6 +100,22 @@ async function canonicalizePeerAddress(addr: string): Promise<string> {
   return formatAddress(resolvedIp ?? normalizedHost, parsed.port);
 }
 
+/**
+ * Rank two peers that share an IP. Higher score wins the slot. We prefer a
+ * confirmed listening endpoint (reachable=1), then the most recently seen one.
+ * This collapses the many inbound connections a single node opens to us — each
+ * carries a different ephemeral source port but is the same physical node.
+ */
+function isBetterRepresentative(candidate: Peer, current: Peer): boolean {
+  const candReachable = parseReachableFlag(candidate.services);
+  const currReachable = parseReachableFlag(current.services);
+  const rank = (r: boolean | undefined): number => (r === true ? 2 : r === false ? 1 : 0);
+  const candRank = rank(candReachable);
+  const currRank = rank(currReachable);
+  if (candRank !== currRank) return candRank > currRank;
+  return candidate.last_seen > current.last_seen;
+}
+
 async function dedupePeersByCanonicalAddress(peers: Peer[]): Promise<Peer[]> {
   if (peers.length === 0) return [];
 
@@ -110,11 +126,15 @@ async function dedupePeersByCanonicalAddress(peers: Peer[]): Promise<Peer[]> {
 
   for (let i = 0; i < peers.length; i++) {
     const canonicalAddr = canonicalAddrs[i];
-    if (deduped.has(canonicalAddr)) continue;
-    deduped.set(canonicalAddr, {
-      ...peers[i],
-      addr: canonicalAddr,
-    });
+    // Group by IP only: multiple entries for one IP (differing only by an
+    // ephemeral source port) are the same node and should collapse to one row.
+    const parsed = parseAddressPort(canonicalAddr);
+    const key = parsed ? parsed.host : canonicalAddr;
+    const peer: Peer = { ...peers[i], addr: canonicalAddr };
+    const existing = deduped.get(key);
+    if (!existing || isBetterRepresentative(peer, existing)) {
+      deduped.set(key, peer);
+    }
   }
 
   return Array.from(deduped.values()).sort((a, b) => b.last_seen - a.last_seen);
@@ -268,20 +288,24 @@ export default async function nodesRoutes(app: FastifyInstance) {
     },
   }, async (): Promise<NodeMapData> => {
     const rows = queryAll<{
+      addr: string;
       lat: number;
       lon: number;
       country: string;
       city: string;
       subversion: string;
       services: string | null;
+      last_seen: number;
     }>(
       `SELECT
+         p.addr,
          p.lat,
          p.lon,
          COALESCE(p.country, 'Unknown') AS country,
          COALESCE(p.city, 'Unknown') AS city,
          p.subversion,
-         p.services
+         p.services,
+         p.last_seen
        FROM peers p
        WHERE p.rowid IN (
          SELECT MAX(rowid)
@@ -292,10 +316,36 @@ export default async function nodesRoutes(app: FastifyInstance) {
        AND p.lon IS NOT NULL`,
     );
 
-    const peers = rows.map(({ services, ...rest }) => ({
-      ...rest,
-      reachable: parseReachableFlag(services),
-    }));
+    // Collapse rows sharing an IP (differing only by ephemeral source port) to
+    // one point per node, mirroring the /nodes dedup.
+    const canonicalAddrs = await Promise.all(
+      rows.map((row) => canonicalizePeerAddress(row.addr))
+    );
+    const byIp = new Map<string, (typeof rows)[number]>();
+    for (let i = 0; i < rows.length; i++) {
+      const parsed = parseAddressPort(canonicalAddrs[i]);
+      const key = parsed ? parsed.host : canonicalAddrs[i];
+      const existing = byIp.get(key);
+      const candReachable = parseReachableFlag(rows[i].services);
+      const currReachable = existing ? parseReachableFlag(existing.services) : undefined;
+      const rank = (r: boolean | undefined): number =>
+        r === true ? 2 : r === false ? 1 : 0;
+      if (
+        !existing ||
+        rank(candReachable) > rank(currReachable) ||
+        (rank(candReachable) === rank(currReachable) &&
+          rows[i].last_seen > existing.last_seen)
+      ) {
+        byIp.set(key, rows[i]);
+      }
+    }
+
+    const peers = Array.from(byIp.values()).map(
+      ({ services, addr, last_seen, ...rest }) => ({
+        ...rest,
+        reachable: parseReachableFlag(services),
+      })
+    );
 
     return { peers };
   });
