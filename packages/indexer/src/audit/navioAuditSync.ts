@@ -116,7 +116,10 @@ export async function syncNavioAuditWallet(
       restoreFromHeight: config.restoreFromHeight,
     });
     await client.initialize();
-    const tip = await client.sync();
+    await client.sync();
+    // client.sync() returns blocks-processed-this-run, not the chain tip — use
+    // the real tip so synced_height is correct on incremental syncs too.
+    const tip = (await client.getChainTip()).height;
     const outputs = await client.getAllOutputs();
     const bal = await client.getBalance();
     await client.disconnect().catch(() => {});
