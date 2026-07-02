@@ -90,6 +90,7 @@ export class Queries {
   private stmtStakeTxids;
   private stmtUnstakeTxids;
   private stmtCoinbaseRewardTxids;
+  private stmtFeeByTxid;
 
   constructor(private db: Database.Database) {
     this.stmtInsertBlock = db.prepare(`
@@ -338,6 +339,14 @@ export class Queries {
       `SELECT txid FROM transactions WHERE is_coinbase = 1 AND block_height > 1`
     );
 
+    // Explicit BLSCT network fee per tx: the value of its PAY_FEE output(s).
+    // Used to strip the fee out of audit-wallet payout amounts so "distributed"
+    // reflects the coin actually delivered to the recipient, not the fee.
+    this.stmtFeeByTxid = db.prepare(
+      `SELECT txid, COALESCE(SUM(value_sat), 0) AS fee
+       FROM outputs WHERE output_type = 'fee' GROUP BY txid`
+    );
+
     this.stmtGetBlockSupply = db.prepare(
       `SELECT * FROM block_supply WHERE height = ?`
     );
@@ -527,6 +536,14 @@ export class Queries {
   coinbaseRewardTxids(): Set<string> {
     const rows = this.stmtCoinbaseRewardTxids.all() as { txid: string }[];
     return new Set(rows.map((r) => r.txid));
+  }
+
+  /** Explicit BLSCT network fee (sats) per txid, from PAY_FEE outputs. */
+  feeSatByTxid(): Map<string, bigint> {
+    const rows = this.stmtFeeByTxid.all() as { txid: string; fee: number | bigint }[];
+    const m = new Map<string, bigint>();
+    for (const r of rows) m.set(r.txid, BigInt(r.fee ?? 0));
+    return m;
   }
 
   listNavioAuditStakeEvents(limit: number, offset: number): NavioAuditStakeEventRow[] {

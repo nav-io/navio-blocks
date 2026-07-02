@@ -173,13 +173,22 @@ export async function syncNavioAuditWallet(
       unstakeTxids: queries.unstakeTxids(),
     });
 
+    // `inputs - changeOut` is everything that left the wallet in the spend tx,
+    // which still includes the explicit BLSCT network fee. Subtract the fee (the
+    // tx's PAY_FEE output, from the explorer block DB) so a payout reflects the
+    // coin actually delivered to the recipient and reconciles 1:1 with the burn.
+    const feeByTxid = queries.feeSatByTxid();
     const outgoingRows = [...spentBySpendTx.entries()]
       .filter(([hash]) => !excludeFromOutgoing.has(hash))
-      .map(([hash, e]) => ({
-        spend_tx_hash: hash,
-        block_height: e.block,
-        amount_sat: (e.inputs - e.changeOut).toString(),
-      }))
+      .map(([hash, e]) => {
+        const fee = feeByTxid.get(hash) ?? 0n;
+        const net = e.inputs - e.changeOut - fee;
+        return {
+          spend_tx_hash: hash,
+          block_height: e.block,
+          amount_sat: net.toString(),
+        };
+      })
       .filter((r) => BigInt(r.amount_sat) > 0n)
       .sort((a, b) => b.block_height - a.block_height);
 
