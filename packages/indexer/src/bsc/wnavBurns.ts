@@ -52,6 +52,26 @@ function envBool(name: string): boolean {
 }
 
 /**
+ * Cold-start block for the historical backfill, from `BSC_START_BLOCK`.
+ * Only used when there is no stored cursor yet; once the watcher has scanned,
+ * the persisted `bsc_wnav_last_scanned_block` takes over. Returns null when
+ * unset/invalid so we fall back to the `tip - INITIAL_LOOKBACK_BLOCKS` window.
+ */
+function getStartBlock(): bigint | null {
+  const raw = process.env.BSC_START_BLOCK?.trim();
+  if (!raw || !/^\d+$/.test(raw)) return null;
+  return BigInt(raw);
+}
+
+/** Convert an http(s):// RPC URL to its ws(s):// equivalent (same host/path). */
+function toWebSocketUrl(url: string): string {
+  if (/^wss?:\/\//i.test(url)) return url;
+  if (/^https:\/\//i.test(url)) return url.replace(/^https/i, "wss");
+  if (/^http:\/\//i.test(url)) return url.replace(/^http/i, "ws");
+  return url;
+}
+
+/**
  * Pick BSC mainnet vs testnet. Defaults to BSC mainnet because navio's wNAV
  * bridge contract lives on BSC mainnet for both navio mainnet (`nav1` notes)
  * and navio testnet (`tnv1` notes). Override with `BSC_CHAIN=testnet` only if
@@ -127,8 +147,14 @@ export function startWnavBurnWatcher(
     ? "wss://bsc-testnet-rpc.publicnode.com"
     : "wss://bsc-rpc.publicnode.com";
 
-  const wssUrl = process.env.BSC_WSS_URL?.trim() || defaultWss;
-  const httpUrl = process.env.BSC_HTTP_URL?.trim() || defaultHttp;
+  // BSC_RPC_URL is a single-knob convenience: it seeds both transports (HTTP as
+  // given, WSS derived from the same host) unless an explicit BSC_HTTP_URL /
+  // BSC_WSS_URL overrides it. Providers like QuikNode serve both on one URL.
+  const rpcUrl = process.env.BSC_RPC_URL?.trim();
+  const wssUrl =
+    process.env.BSC_WSS_URL?.trim() ||
+    (rpcUrl ? toWebSocketUrl(rpcUrl) : defaultWss);
+  const httpUrl = process.env.BSC_HTTP_URL?.trim() || rpcUrl || defaultHttp;
 
   const httpClient = createPublicClient({
     chain,
@@ -271,10 +297,14 @@ export function startWnavBurnWatcher(
     );
   }
 
+  const startBlock = getStartBlock();
   const cursorAtStart = queries.getSyncState(SYNC_KEY_LAST_BLOCK);
   console.log(
     "[bsc/wnav] Last scanned block in DB: %s",
-    cursorAtStart ?? "<none — will start at tip - 50k>"
+    cursorAtStart ??
+      (startBlock !== null
+        ? `<none — will start at BSC_START_BLOCK=${startBlock.toString()}>`
+        : "<none — will start at tip - 50k>")
   );
   console.log(
     "[bsc/wnav] HTTP poll interval=%dms heartbeat=%dms debug=%s",
@@ -308,6 +338,7 @@ export function startWnavBurnWatcher(
         persistLog,
         verbose,
         debug,
+        startBlock,
       );
     } catch (err) {
       console.error(
@@ -499,12 +530,17 @@ async function backfill(
   }) => Promise<void>,
   verbose: boolean,
   debug: boolean,
+  startBlock: bigint | null,
 ): Promise<void> {
   const latest = await httpClient.getBlockNumber();
   const stored = queries.getSyncState(SYNC_KEY_LAST_BLOCK);
   let from: bigint;
   if (stored !== null && /^\d+$/.test(stored)) {
     from = BigInt(stored) + 1n;
+  } else if (startBlock !== null) {
+    // Cold start with an explicit BSC_START_BLOCK: begin exactly there so the
+    // full bridge history is scanned regardless of how far back it is.
+    from = startBlock;
   } else {
     from =
       latest > INITIAL_LOOKBACK_BLOCKS
