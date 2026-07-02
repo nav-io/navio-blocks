@@ -267,7 +267,7 @@ async function main(): Promise<void> {
   const navioAuditConfig = resolveNavioAuditConfig(network, DB_PATH);
   let auditTimer: ReturnType<typeof setInterval> | undefined;
   const auditIntervalMs = Math.max(
-    60_000,
+    30_000,
     parseInt(process.env.NAVIO_AUDIT_INTERVAL_MS ?? "900000", 10) || 900000
   );
   if (navioAuditConfig) {
