@@ -50,7 +50,7 @@ function presenceRank(state: PresenceState): number {
   }
 }
 
-/** Strip a port suffix like ":8333" or "[::1]:8333", returning just the host. */
+/** Strip a port suffix like ":48470" or "[::1]:48470", returning just the host. */
 function hostFromAddr(addr: string): string {
   if (!addr) return '';
   if (addr.startsWith('[')) {
