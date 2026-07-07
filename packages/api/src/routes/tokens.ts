@@ -316,7 +316,7 @@ function toTokenSummary(row: TokenStatsRow): TokenSummary {
 export default async function tokenRoutes(app: FastifyInstance) {
   app.get<{
     Querystring: { limit?: number; offset?: number; type?: "all" | "token" | "nft" };
-  }>("/api/tokens", {
+  }>("/tokens", {
     schema: {
       tags: ["Tokens"],
       description: "List indexed token collections and NFT collections from on-chain data",
@@ -459,7 +459,7 @@ export default async function tokenRoutes(app: FastifyInstance) {
   app.get<{
     Params: { tokenId: string };
     Querystring: { limit?: number; offset?: number };
-  }>("/api/tokens/:tokenId", {
+  }>("/tokens/:tokenId", {
     schema: {
       tags: ["Tokens"],
       description: "Get token collection or NFT collection details by base token ID",
@@ -670,7 +670,7 @@ export default async function tokenRoutes(app: FastifyInstance) {
   app.get<{
     Params: { tokenId: string; index: string };
     Querystring: { limit?: number; offset?: number };
-  }>("/api/nfts/:tokenId/:index", {
+  }>("/nfts/:tokenId/:index", {
     schema: {
       tags: ["Tokens"],
       description: "Get a specific NFT detail by token ID and NFT index",
