@@ -13,13 +13,13 @@
     "start": "node dist/index.js",
     "reindex": "tsx src/index.ts --reindex",
     "reindex:from": "tsx src/index.ts --from",
-    "test": "tsx src/audit/stakeEvents.test.ts"
+    "test": "tsx src/audit/stakeEvents.test.ts && tsx src/audit/matchBurns.test.ts"
   },
   "dependencies": {
     "@navio-blocks/shared": "*",
     "better-sqlite3": "^11.0.0",
     "dotenv": "^16.4.0",
-    "navio-sdk": "^0.1.15",
+    "navio-sdk": "^0.1.31",
     "viem": "^2.48.4"
   },
   "engines": {
