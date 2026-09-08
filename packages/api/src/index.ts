@@ -21,6 +21,8 @@ import priceRoutes from "./routes/price.js";
 import supplyRoutes from "./routes/supply.js";
 import tokenRoutes from "./routes/tokens.js";
 import bridgeRoutes from "./routes/bridge.js";
+import p2pmsgRoutes from "./routes/p2pmsg.js";
+import stakingRoutes from "./routes/staking.js";
 
 const port = Number(process.env.API_PORT ?? 3001);
 const host = process.env.API_HOST ?? "0.0.0.0";
@@ -115,6 +117,8 @@ async function main() {
         await scope.register(supplyRoutes);
         await scope.register(tokenRoutes);
         await scope.register(bridgeRoutes);
+        await scope.register(p2pmsgRoutes);
+        await scope.register(stakingRoutes);
       },
       { prefix }
     );

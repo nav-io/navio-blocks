@@ -50,6 +50,21 @@ check("stakeunlock inflow becomes an unstake event", () => {
   assert.equal(excludeFromOutgoing.size, 0, "unstake is an inflow, not a payout");
 });
 
+check("compound re-stake keeps the payout and emits no stake/unstake event", () => {
+  // Real case: tx 742484… unstaked ~81.38M, paid the recipient 4997.42, and
+  // re-staked the change. It appears in BOTH stakeTxids and unstakeTxids. The
+  // 4997.42 residual is a payout, not a stake, and must stay in the payout list.
+  const reStakeTx = "742484589fe53e09a2974c6bfc0f372bbe6d5b201eb529f12e60e507cd53ab3b";
+  const { events, excludeFromOutgoing } = deriveStakeEvents({
+    spentByTx: new Map([[reStakeTx, { inputs: 8_139_186_928_596_254n, changeOut: 8_138_687_185_196_254n, block: 1174 }]]),
+    receivedByTx: new Map([[reStakeTx, { amount: 8_138_687_185_196_254n, block: 1174 }]]),
+    stakeTxids: new Set([reStakeTx]),
+    unstakeTxids: new Set([reStakeTx]),
+  });
+  assert.equal(events.length, 0, "compound re-stake emits no stake/unstake event");
+  assert.ok(!excludeFromOutgoing.has(reStakeTx), "payout residual kept in outgoing");
+});
+
 check("non-stake flows produce nothing", () => {
   const { events } = deriveStakeEvents({
     spentByTx: new Map([["p", { inputs: 5n, changeOut: 1n, block: 1 }]]),

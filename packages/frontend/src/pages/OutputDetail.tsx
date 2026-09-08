@@ -65,7 +65,7 @@ export default function OutputDetail() {
 
           {/* Badges */}
           <div className="flex flex-wrap items-center gap-2">
-            {output.output_type && <OutputTypeBadge type={output.output_type} />}
+            {output.output_type && <OutputTypeBadge type={output.output_type} delegated={output.delegated} />}
             <PrivacyBadge isBlsct={output.is_blsct} />
             {hasToken && (
               <span className={`inline-block rounded px-2 py-0.5 text-xs font-mono font-medium border ${isNft ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30' : 'bg-teal-500/20 text-teal-300 border-teal-500/30'}`}>

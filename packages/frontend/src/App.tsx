@@ -13,6 +13,8 @@ import NftDetail from './pages/NftDetail';
 import Network from './pages/Network';
 import Price from './pages/Price';
 import Supply from './pages/Supply';
+import Overlay from './pages/Overlay';
+import Staking from './pages/Staking';
 import Search from './pages/Search';
 
 export default function App() {
@@ -32,6 +34,8 @@ export default function App() {
           <Route path="/token/:tokenId" element={<TokenDetail />} />
           <Route path="/nft/:tokenId/:index" element={<NftDetail />} />
           <Route path="/network" element={<Network />} />
+          <Route path="/overlay" element={<Overlay />} />
+          <Route path="/staking" element={<Staking />} />
           <Route path="/supply" element={<Supply />} />
           <Route path="/price" element={<Price />} />
           <Route path="/search" element={<Search />} />

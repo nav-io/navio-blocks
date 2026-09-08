@@ -10,6 +10,8 @@ import type { NetworkType } from "@navio-blocks/shared";
 import { Poller } from "./sync/poller.js";
 import { updatePeers } from "./sync/peers.js";
 import { updatePrice } from "./sync/price.js";
+import { updateP2pmsg } from "./sync/p2pmsg.js";
+import { updateStaking } from "./sync/staking.js";
 import { startWnavBurnWatcher, type WnavBurnWatcher } from "./bsc/wnavBurns.js";
 import {
   resolveNavioAuditConfig,
@@ -90,6 +92,8 @@ const POLL_INTERVAL = parseInt(process.env.POLL_INTERVAL ?? "5000", 10);
 const NETWORK = (process.env.NETWORK ?? "mainnet") as NetworkType;
 const PEER_INTERVAL = 10 * 60 * 1000; // 10 minutes
 const PRICE_INTERVAL = 5 * 60 * 1000; // 5 minutes
+const P2PMSG_INTERVAL = 60 * 1000; // 1 minute
+const STAKING_INTERVAL = 5 * 60 * 1000; // 5 minutes (RPC result is cached per tip node-side)
 
 const BSC_WNAV_ENABLED =
   process.env.BSC_WNAV_ENABLED !== "0" &&
@@ -238,16 +242,26 @@ async function main(): Promise<void> {
   const poller = new Poller(rpc, queries, network);
   poller.start(POLL_INTERVAL);
 
-  // Run initial peer and price updates
+  // Run initial peer, price and p2pmsg updates
   void updatePeers(rpc, queries, network);
   void updatePrice(queries);
+  void updateP2pmsg(rpc, queries, network);
+  void updateStaking(rpc, queries, network);
 
-  // Set up recurring peer and price updates
+  // Set up recurring peer, price and p2pmsg updates
   const peerTimer = setInterval(
     () => void updatePeers(rpc, queries, network),
     PEER_INTERVAL
   );
   const priceTimer = setInterval(() => void updatePrice(queries), PRICE_INTERVAL);
+  const p2pmsgTimer = setInterval(
+    () => void updateP2pmsg(rpc, queries, network),
+    P2PMSG_INTERVAL
+  );
+  const stakingTimer = setInterval(
+    () => void updateStaking(rpc, queries, network),
+    STAKING_INTERVAL
+  );
 
   let wnavWatcher: WnavBurnWatcher | undefined;
   if (BSC_WNAV_ENABLED) {
@@ -290,6 +304,8 @@ async function main(): Promise<void> {
   console.log("[indexer]   Block polling:  every %dms", POLL_INTERVAL);
   console.log("[indexer]   Peer updates:   every %dms", PEER_INTERVAL);
   console.log("[indexer]   Price updates:  every %dms", PRICE_INTERVAL);
+  console.log("[indexer]   p2pmsg updates: every %dms", P2PMSG_INTERVAL);
+  console.log("[indexer]   staking snapshots: every %dms", STAKING_INTERVAL);
   console.log("[indexer]   Database:       %s", DB_PATH);
 
   // Graceful shutdown
@@ -299,6 +315,8 @@ async function main(): Promise<void> {
     poller.stop();
     clearInterval(peerTimer);
     clearInterval(priceTimer);
+    clearInterval(p2pmsgTimer);
+    clearInterval(stakingTimer);
     if (auditTimer) clearInterval(auditTimer);
     db.close();
     console.log("[indexer] Goodbye");

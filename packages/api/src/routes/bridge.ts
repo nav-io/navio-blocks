@@ -5,6 +5,7 @@ import type {
   NavioBridgeAuditOutgoing,
   NavioBridgeAuditStakeEvent,
   NavioBridgeAuditSummary,
+  NavioBridgeAwaitingBurn,
   PaginatedResponse,
   WrappedNavcoinBurn,
 } from '@navio-blocks/shared';
@@ -27,6 +28,13 @@ function auditTablesReady(): boolean {
 function stakeEventsTableReady(): boolean {
   const row = queryOne<{ name: string }>(
     `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'navio_audit_stake_events'`
+  );
+  return row !== undefined;
+}
+
+function awaitingTableReady(): boolean {
+  const row = queryOne<{ name: string }>(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'navio_audit_awaiting'`
   );
   return row !== undefined;
 }
@@ -147,7 +155,9 @@ export default async function bridgeRoutes(app: FastifyInstance) {
       return { indexed: false, summary: null, total_outgoing_sat: '0', net_staked_sat: '0' };
     }
     const meta = queryOne<NavioBridgeAuditSummary>(
-      `SELECT balance_sat, earned_rewards_sat, synced_height, chain_tip, error_message, updated_at FROM navio_audit_meta WHERE id = 1`
+      `SELECT balance_sat, earned_rewards_sat, synced_height, chain_tip, error_message, updated_at,
+              settled_sat, awaiting_sat, unmatched_payout_sat, unmatched_payout_count
+       FROM navio_audit_meta WHERE id = 1`
     );
     if (!meta || meta.updated_at === 0) {
       return { indexed: false, summary: meta ?? null, total_outgoing_sat: '0', net_staked_sat: '0' };
@@ -203,8 +213,13 @@ export default async function bridgeRoutes(app: FastifyInstance) {
       `SELECT COUNT(*) FROM navio_audit_outgoing`
     );
 
-    const rows = queryAll<NavioBridgeAuditOutgoing>(
-      `SELECT spend_tx_hash, block_height, amount_sat
+    const rows = queryAll<{
+      spend_tx_hash: string;
+      block_height: number;
+      amount_sat: string;
+      matched: number;
+    }>(
+      `SELECT spend_tx_hash, block_height, amount_sat, matched
        FROM navio_audit_outgoing
        ORDER BY block_height DESC, spend_tx_hash DESC
        LIMIT ? OFFSET ?`,
@@ -212,7 +227,14 @@ export default async function bridgeRoutes(app: FastifyInstance) {
       offset,
     );
 
-    return { data: rows, total, limit, offset };
+    const data: NavioBridgeAuditOutgoing[] = rows.map((r) => ({
+      spend_tx_hash: r.spend_tx_hash,
+      block_height: r.block_height,
+      amount_sat: r.amount_sat,
+      matched: r.matched !== 0,
+    }));
+
+    return { data, total, limit, offset };
   });
 
   app.get<{
@@ -255,6 +277,45 @@ export default async function bridgeRoutes(app: FastifyInstance) {
        ORDER BY block_height DESC, tx_hash DESC
        LIMIT ? OFFSET ?`,
       ...(type ? [type, limit, offset] : [limit, offset]),
+    );
+
+    return { data: rows, total, limit, offset };
+  });
+
+  app.get<{
+    Querystring: { limit?: number; offset?: number };
+  }>('/bridge/audit/awaiting', {
+    schema: {
+      tags: ['Bridge'],
+      summary: 'wNAV burns with no matching Navio payout yet (pending payouts)',
+      description:
+        'Burns the reconciler could not match to an on-chain payout — the coins burned on BSC that are still awaiting distribution on Navio.',
+      querystring: {
+        type: 'object',
+        properties: {
+          limit: { type: 'integer', minimum: 1, maximum: 500, default: 100 },
+          offset: { type: 'integer', minimum: 0, default: 0 },
+        },
+      },
+      response: { 200: { type: 'object', additionalProperties: true } },
+    },
+  }, async (request): Promise<PaginatedResponse<NavioBridgeAwaitingBurn>> => {
+    const limit = request.query.limit ?? 100;
+    const offset = request.query.offset ?? 0;
+
+    if (!awaitingTableReady()) {
+      return { data: [], total: 0, limit, offset };
+    }
+
+    const total = queryScalar<number>(`SELECT COUNT(*) FROM navio_audit_awaiting`);
+
+    const rows = queryAll<NavioBridgeAwaitingBurn>(
+      `SELECT tx_hash, amount_sat, timestamp, note
+       FROM navio_audit_awaiting
+       ORDER BY timestamp DESC
+       LIMIT ? OFFSET ?`,
+      limit,
+      offset,
     );
 
     return { data: rows, total, limit, offset };

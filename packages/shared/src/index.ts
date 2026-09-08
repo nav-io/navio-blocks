@@ -70,6 +70,8 @@ export interface Output {
   predicate?: string;
   predicate_hex?: string;
   predicate_args?: Record<string, unknown>;
+  /** Staked commitment delegated to a third-party operator (cold staking). */
+  delegated?: boolean;
   // BLSCT fields
   spending_key?: string;
   ephemeral_key?: string;
@@ -337,6 +339,14 @@ export interface NavioBridgeAuditSummary {
   error_message: string | null;
   /** Unix seconds */
   updated_at: number;
+  /** Sum of burns settled 1:1 by an on-chain payout (NAV sats). Provably distributed. */
+  settled_sat?: string;
+  /** Sum of burns not yet settled by any payout (NAV sats) — burned but awaiting payout. */
+  awaiting_sat?: string;
+  /** Sum of payout outflows that match no burn (NAV sats) — an inconsistency (over-pay / manual / internal). */
+  unmatched_payout_sat?: string;
+  /** Number of payout outflows that match no burn. */
+  unmatched_payout_count?: number;
 }
 
 /** One outgoing native-NAV payout from the audited wallet (`spend_tx_hash` is the transaction that spent inputs). */
@@ -344,6 +354,20 @@ export interface NavioBridgeAuditOutgoing {
   spend_tx_hash: string;
   block_height: number;
   amount_sat: string;
+  /** True when this payout was reconciled 1:1 to one or more wNAV burns. */
+  matched?: boolean;
+}
+
+/** A wNAV burn with no matching Navio payout yet — a pending payout. */
+export interface NavioBridgeAwaitingBurn {
+  /** BSC burn tx hash (may be null for legacy rows). */
+  tx_hash: string | null;
+  /** Amount burned / owed on Navio (NAV sats). */
+  amount_sat: string;
+  /** Burn time (unix seconds). */
+  timestamp: number;
+  /** Destination Navio address from the burn note. */
+  note: string | null;
 }
 
 /** A stake (commitment locked) or unstake (commitment unlocked) event on the audited wallet. */
@@ -415,4 +439,147 @@ export interface NftDetail {
   current_owner_address: string | null;
   total_activity: number;
   activity: TokenActivity[];
+}
+
+// ---------------------------------------------------------------------------
+// p2pmsg / P2P overlay stats
+//
+// The Navio node optionally exposes a peer-to-peer messaging overlay (p2pmsg)
+// used for private-send candidate aggregation and a decentralized OTC/RFQ swap
+// bus. These types describe the explorer's time-series view of that overlay.
+// Every field degrades gracefully: a node without p2pmsg reports `enabled:
+// false` and zeroed counters rather than an error.
+// ---------------------------------------------------------------------------
+
+/** One stored p2pmsg time-series snapshot (mirrors the p2pmsg_stats table). */
+export interface P2pmsgStatsSnapshot {
+  timestamp: number;
+  network: NetworkType;
+  enabled: boolean;
+  /** Connected peers advertising NODE_P2PMSG (relay-capable). */
+  relay_capable_peers: number;
+  /** Total connected peers, from the node's own peer list. */
+  total_peers: number;
+  /** Fee-0 cover candidates in the aggregation pool (private-send anonymity set). */
+  agg_available: number;
+  /** Extra fee (sats) charged per additional aggregation candidate. */
+  agg_extra_fee_per_candidate: number;
+  /** Standing swap orders cached from the ORDER_ANN bus. */
+  orders_count: number;
+  /** Byte size of the cached order set. */
+  orders_bytes: number;
+  /** Open request-for-quote uuids. */
+  rfqs_count: number;
+  /** p2pmsg pings received by the node. */
+  pings_received: number;
+  identity_pubkey: string | null;
+  inbox_pubkey: string | null;
+}
+
+/** Latest overlay snapshot plus derived adoption %, with 24h-ago comparisons for trends. */
+export interface P2pmsgSummary {
+  enabled: boolean;
+  /** Unix seconds of the latest snapshot, or null when none recorded. */
+  timestamp: number | null;
+  relay_capable_peers: number;
+  total_peers: number;
+  /** relay_capable_peers / total_peers * 100 (0 when no peers). */
+  capable_pct: number;
+  agg_available: number;
+  agg_extra_fee_per_candidate: number;
+  pings_received: number;
+  identity_pubkey: string | null;
+  inbox_pubkey: string | null;
+  /** Values from ~24h earlier for trend arrows (null when no prior sample). */
+  relay_capable_peers_24h: number | null;
+  capable_pct_24h: number | null;
+  agg_available_24h: number | null;
+}
+
+/** One point in the overlay history series (for charts). */
+export interface P2pmsgHistoryPoint {
+  timestamp: number;
+  relay_capable_peers: number;
+  total_peers: number;
+  capable_pct: number;
+  agg_available: number;
+  orders_count: number;
+  rfqs_count: number;
+}
+
+/** Live decentralized OTC / RFQ liquidity snapshot (aggregate counts only). */
+export interface P2pmsgTrading {
+  enabled: boolean;
+  timestamp: number | null;
+  orders_count: number;
+  orders_bytes: number;
+  rfqs_count: number;
+}
+
+// ---------------------------------------------------------------------------
+// Staking / cold-staking (delegated) commitments
+// ---------------------------------------------------------------------------
+
+/**
+ * Staking overview. Counts come from the explorer's own chain index; the
+ * `node` block is the connected node's `liststakedcommitmentsdata` view of the
+ * unspent staked set (public data), used to cross-check the index.
+ * Amounts are BLSCT-hidden and never available.
+ */
+export interface StakingSummary {
+  /** Unspent staked commitments known to the index. */
+  active_commitments: number;
+  /** Of which carry a cold-staking delegation payload. */
+  delegated_commitments: number;
+  plain_commitments: number;
+  /** delegated / active * 100 (0 when none). */
+  delegated_pct: number;
+  /** All staked commitments ever created (including spent / unstaked). */
+  total_created: number;
+  total_delegated_created: number;
+  /** Staked commitments spent (unstake or re-stake) ever. */
+  total_spent: number;
+  /** Rolling 24h activity by block time. */
+  created_24h: number;
+  delegated_created_24h: number;
+  spent_24h: number;
+  /** Block time of the newest / oldest active commitment (null when none). */
+  newest_active_timestamp: number | null;
+  oldest_active_timestamp: number | null;
+  /** Node-side snapshot of the unspent staked set, null if never sampled. */
+  node: {
+    timestamp: number;
+    active_commitments: number;
+    delegated_commitments: number;
+    /** True when node and index agree on both counts at sample time. */
+    in_sync: boolean;
+  } | null;
+}
+
+/** One bucket of node-side staked-set snapshots (for charts). */
+export interface StakingHistoryPoint {
+  timestamp: number;
+  active_commitments: number;
+  delegated_commitments: number;
+}
+
+/** One time bucket of on-chain stake activity derived from block times. */
+export interface StakingActivityPoint {
+  timestamp: number;
+  created: number;
+  delegated_created: number;
+  spent: number;
+}
+
+/** A staked commitment output as listed on the staking page. */
+export interface StakingCommitment {
+  output_hash: string;
+  txid: string;
+  n: number;
+  block_height: number;
+  timestamp: number;
+  delegated: boolean;
+  spent: boolean;
+  spending_txid: string | null;
+  spent_height: number | null;
 }

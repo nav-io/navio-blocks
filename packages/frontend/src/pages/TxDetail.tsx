@@ -97,7 +97,7 @@ function OutputRow({ output, index }: { output: Output; index: number }) {
               ) : (
                 <span className="font-mono text-sm text-white/40 italic">No output hash</span>
               )}
-              {output.output_type && <OutputTypeBadge type={output.output_type} />}
+              {output.output_type && <OutputTypeBadge type={output.output_type} delegated={output.delegated} />}
               {output.is_blsct && <PrivacyBadge isBlsct />}
                 {hasToken && (
                   <span className={`inline-block rounded px-2 py-0.5 text-xs font-mono font-medium border ${

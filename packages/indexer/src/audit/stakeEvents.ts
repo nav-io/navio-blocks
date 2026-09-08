@@ -46,6 +46,13 @@ export interface DeriveStakeEventsResult {
  * A tx that creates a stake AND drew coins out of the wallet is a `stake` of
  * `inputs - changeOut`. A tx that spends a stake AND paid coins into the wallet
  * is an `unstake` of `received`.
+ *
+ * A tx that does BOTH (spends a staked commitment and re-stakes the change) is a
+ * compound re-stake: the staking side nets out, and the only value that actually
+ * leaves the wallet's visible balance is the payout carried alongside it. Such a
+ * tx must NOT be classified as a stake nor excluded from the payout list — the
+ * `inputs - changeOut` residual is a genuine payout, not a stakelock. Treating
+ * it as a stake hides the payout and breaks burn/payout reconciliation.
  */
 export function deriveStakeEvents(input: DeriveStakeEventsInput): DeriveStakeEventsResult {
   const { spentByTx, receivedByTx, stakeTxids, unstakeTxids } = input;
@@ -54,6 +61,7 @@ export function deriveStakeEvents(input: DeriveStakeEventsInput): DeriveStakeEve
 
   for (const [txid, flow] of spentByTx) {
     if (!stakeTxids.has(txid)) continue;
+    if (unstakeTxids.has(txid)) continue; // compound re-stake: keep the payout residual
     const amount = flow.inputs - flow.changeOut;
     if (amount <= 0n) continue;
     events.push({
@@ -67,6 +75,7 @@ export function deriveStakeEvents(input: DeriveStakeEventsInput): DeriveStakeEve
 
   for (const [txid, flow] of receivedByTx) {
     if (!unstakeTxids.has(txid)) continue;
+    if (stakeTxids.has(txid)) continue; // compound re-stake: staking nets out, not a real unstake
     if (flow.amount <= 0n) continue;
     events.push({
       tx_hash: txid,

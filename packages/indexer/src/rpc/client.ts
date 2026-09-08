@@ -7,6 +7,42 @@ export interface RpcConfig {
 
 export type AddNodeCommand = "add" | "remove" | "onetry";
 
+/** `getp2pmsginfo` result. All fields but `enabled` are absent when disabled. */
+export interface P2pmsgInfo {
+  enabled: boolean;
+  identity_pubkey?: string;
+  inbox_pubkey?: string;
+  prekey_sig?: string;
+  pings_received?: number;
+  relay_capable_peers?: number;
+}
+
+/** `getaggregationhint` result (private-send cover-candidate pool). */
+export interface AggregationHint {
+  enabled: boolean;
+  available?: number;
+  candidate_weight?: number;
+  blsct_default_fee?: number;
+  extra_fee_per_candidate?: number;
+}
+
+/** `listorders` result (aggregate counts only; individual orders stay private). */
+export interface ListOrdersResult {
+  enabled: boolean;
+  count?: number;
+  bytes?: number;
+}
+
+/** One entry of `liststakedcommitmentsdata` (public unspent staked set). */
+export interface StakedCommitmentData {
+  commitment: string;
+  outhash: string;
+  /** Full predicate hex (op + compact size + payload), "" when none. */
+  predicate: string;
+  height: number;
+  confirmations: number;
+}
+
 export class RpcClient {
   private url: string;
   private authHeader: string;
@@ -107,5 +143,59 @@ export class RpcClient {
   async getAddedNodeInfo(node?: string): Promise<unknown[]> {
     const params = node ? [node] : [];
     return (await this.call("getaddednodeinfo", params)) as unknown[];
+  }
+
+  // --- p2pmsg / P2P overlay -------------------------------------------------
+  // These RPCs are optional: a pre-p2pmsg node returns method-not-found and a
+  // node with the overlay disabled may throw "p2pmsg disabled". In every such
+  // case we swallow the error and report a disabled/empty result so the indexer
+  // keeps running against any node.
+
+  async getP2pmsgInfo(): Promise<P2pmsgInfo> {
+    try {
+      return (await this.call("getp2pmsginfo")) as P2pmsgInfo;
+    } catch {
+      return { enabled: false };
+    }
+  }
+
+  async getAggregationHint(): Promise<AggregationHint> {
+    try {
+      return (await this.call("getaggregationhint")) as AggregationHint;
+    } catch {
+      return { enabled: false };
+    }
+  }
+
+  async listOrders(): Promise<ListOrdersResult> {
+    try {
+      return (await this.call("listorders")) as ListOrdersResult;
+    } catch {
+      return { enabled: false };
+    }
+  }
+
+  // --- staking --------------------------------------------------------------
+
+  /**
+   * Public unspent staked-commitment set. Returns null when the node predates
+   * the RPC (method not found) so callers can tell "unsupported" from "empty".
+   */
+  async listStakedCommitmentsData(): Promise<StakedCommitmentData[] | null> {
+    try {
+      const result = await this.call("liststakedcommitmentsdata");
+      return Array.isArray(result) ? (result as StakedCommitmentData[]) : [];
+    } catch {
+      return null;
+    }
+  }
+
+  async listRfqs(): Promise<string[]> {
+    try {
+      const result = await this.call("listrfqs");
+      return Array.isArray(result) ? (result as string[]) : [];
+    } catch {
+      return [];
+    }
   }
 }

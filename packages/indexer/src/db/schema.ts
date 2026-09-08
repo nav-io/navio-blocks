@@ -79,7 +79,8 @@ export function initDatabase(dbPath: string): Database.Database {
       token_id      TEXT,
       predicate     TEXT,
       predicate_hex TEXT,
-      predicate_args_json TEXT
+      predicate_args_json TEXT,
+      delegated     INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS inputs (
@@ -185,6 +186,13 @@ export function initDatabase(dbPath: string): Database.Database {
 
     CREATE INDEX IF NOT EXISTS idx_navio_audit_stake_events_block ON navio_audit_stake_events(block_height DESC);
 
+    CREATE TABLE IF NOT EXISTS navio_audit_awaiting (
+      tx_hash TEXT,          -- BSC burn tx
+      amount_sat TEXT NOT NULL,
+      timestamp INTEGER NOT NULL,
+      note TEXT              -- destination Navio address
+    );
+
     CREATE TABLE IF NOT EXISTS navio_audit_meta (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       balance_sat TEXT NOT NULL DEFAULT '0',
@@ -194,6 +202,40 @@ export function initDatabase(dbPath: string): Database.Database {
       error_message TEXT,
       updated_at INTEGER NOT NULL DEFAULT 0
     );
+
+    CREATE TABLE IF NOT EXISTS p2pmsg_stats (
+      timestamp                   INTEGER NOT NULL,
+      network                     TEXT    NOT NULL,
+      enabled                     INTEGER NOT NULL DEFAULT 0,
+      relay_capable_peers         INTEGER NOT NULL DEFAULT 0,
+      total_peers                 INTEGER NOT NULL DEFAULT 0,
+      agg_available               INTEGER NOT NULL DEFAULT 0,
+      agg_extra_fee_per_candidate INTEGER NOT NULL DEFAULT 0,
+      orders_count                INTEGER NOT NULL DEFAULT 0,
+      orders_bytes                INTEGER NOT NULL DEFAULT 0,
+      rfqs_count                  INTEGER NOT NULL DEFAULT 0,
+      pings_received              INTEGER NOT NULL DEFAULT 0,
+      identity_pubkey             TEXT,
+      inbox_pubkey                TEXT,
+      PRIMARY KEY (network, timestamp)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_p2pmsg_stats_network_ts ON p2pmsg_stats(network, timestamp);
+
+    -- Periodic snapshot of the node's unspent staked-commitment set
+    -- (liststakedcommitmentsdata) next to the explorer's own view, so the
+    -- staking page can chart the staked set and flag index/node drift.
+    CREATE TABLE IF NOT EXISTS staking_stats (
+      timestamp             INTEGER NOT NULL,
+      network               TEXT    NOT NULL,
+      node_height           INTEGER NOT NULL DEFAULT 0,
+      active_commitments    INTEGER NOT NULL DEFAULT 0,
+      delegated_commitments INTEGER NOT NULL DEFAULT 0,
+      db_active             INTEGER NOT NULL DEFAULT 0,
+      db_delegated          INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (network, timestamp)
+    );
+    CREATE INDEX IF NOT EXISTS idx_staking_stats_network_ts ON staking_stats(network, timestamp);
   `);
 
   // Lightweight migrations for existing DBs.
@@ -201,13 +243,33 @@ export function initDatabase(dbPath: string): Database.Database {
   ensureColumn(db, "blocks", "is_blsct", "INTEGER DEFAULT 0");
   ensureColumn(db, "outputs", "output_type", "TEXT DEFAULT 'unknown'");
   ensureColumn(db, "navio_audit_meta", "earned_rewards_sat", "TEXT NOT NULL DEFAULT '0'");
+  // Burn↔payout reconciliation snapshot.
+  ensureColumn(db, "navio_audit_meta", "settled_sat", "TEXT NOT NULL DEFAULT '0'");
+  ensureColumn(db, "navio_audit_meta", "awaiting_sat", "TEXT NOT NULL DEFAULT '0'");
+  ensureColumn(db, "navio_audit_meta", "unmatched_payout_sat", "TEXT NOT NULL DEFAULT '0'");
+  ensureColumn(db, "navio_audit_meta", "unmatched_payout_count", "INTEGER NOT NULL DEFAULT 0");
+  // 1 when a payout reconciles 1:1 to burn(s); 0 flags an unmatched outflow.
+  ensureColumn(db, "navio_audit_outgoing", "matched", "INTEGER NOT NULL DEFAULT 1");
   ensureColumn(db, "outputs", "spk_type", "TEXT");
   ensureColumn(db, "outputs", "spk_hex", "TEXT");
   ensureColumn(db, "outputs", "token_id", "TEXT");
   ensureColumn(db, "outputs", "predicate", "TEXT");
   ensureColumn(db, "outputs", "predicate_hex", "TEXT");
   ensureColumn(db, "outputs", "predicate_args_json", "TEXT");
+  ensureColumn(db, "outputs", "delegated", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "peers", "last_handshake", "INTEGER");
+  // p2pmsg overlay time-series columns (for DBs created before a given column existed).
+  ensureColumn(db, "p2pmsg_stats", "enabled", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "p2pmsg_stats", "relay_capable_peers", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "p2pmsg_stats", "total_peers", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "p2pmsg_stats", "agg_available", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "p2pmsg_stats", "agg_extra_fee_per_candidate", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "p2pmsg_stats", "orders_count", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "p2pmsg_stats", "orders_bytes", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "p2pmsg_stats", "rfqs_count", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "p2pmsg_stats", "pings_received", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "p2pmsg_stats", "identity_pubkey", "TEXT");
+  ensureColumn(db, "p2pmsg_stats", "inbox_pubkey", "TEXT");
 
   // Indexes on migrated columns (must run after ensureColumn)
   db.exec(`
@@ -221,7 +283,20 @@ export function initDatabase(dbPath: string): Database.Database {
   db.exec(`UPDATE outputs SET output_type = 'token_create' WHERE UPPER(COALESCE(predicate, '')) = 'CREATE_TOKEN'`);
   db.exec(`UPDATE outputs SET output_type = 'token_mint' WHERE UPPER(COALESCE(predicate, '')) IN ('MINT_TOKEN', 'MINT')`);
   db.exec(`UPDATE outputs SET output_type = 'nft_mint' WHERE UPPER(COALESCE(predicate, '')) IN ('MINT_NFT', 'NFT_MINT')`);
-  db.exec(`UPDATE outputs SET output_type = 'fee' WHERE UPPER(COALESCE(predicate, '')) IN ('PAY_FEE', 'DATA')`);
+  // A staked commitment (script starts with OP_STAKED_COMMITMENT = 0xb9) may carry
+  // a DATA predicate: that is a cold-staking delegation, NOT a fee output. Older
+  // indexer versions classified those as 'fee'; restore them before the generic
+  // predicate → fee remap below, which now excludes staking scripts.
+  db.exec(`UPDATE outputs SET output_type = 'stake' WHERE output_type <> 'coinbase' AND substr(LOWER(COALESCE(spk_hex, '')), 1, 2) = 'b9' AND UPPER(COALESCE(predicate, '')) = 'DATA'`);
+  db.exec(`UPDATE outputs SET output_type = 'fee' WHERE UPPER(COALESCE(predicate, '')) IN ('PAY_FEE', 'DATA') AND output_type <> 'stake'`);
+  // Delegation flag: DATA predicate whose payload starts with the delegation magic
+  // "NVDG\x01" (4e56444701) right after the op byte (04) and a 1/3/5-byte compact size.
+  db.exec(`UPDATE outputs SET delegated = 1
+           WHERE output_type = 'stake' AND UPPER(COALESCE(predicate, '')) = 'DATA' AND delegated = 0
+             AND substr(LOWER(COALESCE(predicate_hex, '')), 1, 2) = '04'
+             AND (substr(LOWER(predicate_hex), 5, 10) = '4e56444701'
+               OR substr(LOWER(predicate_hex), 9, 10) = '4e56444701'
+               OR substr(LOWER(predicate_hex), 13, 10) = '4e56444701')`);
   db.exec(`UPDATE outputs SET output_type = 'transfer' WHERE output_type = 'unknown' AND is_blsct = 1`);
   db.exec(`UPDATE outputs SET output_type = 'transfer' WHERE output_type = 'unknown' AND (token_id IS NULL OR token_id = '0000000000000000000000000000000000000000000000000000000000000000') AND spk_type IN ('nonstandard', 'op_true', 'pubkeyhash', 'scripthash', 'witness_v0_keyhash', 'witness_v0_scripthash', 'witness_v1_taproot', 'pubkey', 'multisig')`);
 

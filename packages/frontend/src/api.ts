@@ -134,4 +134,35 @@ export const api = {
     fetchJSON<import('@navio-blocks/shared').PaginatedResponse<import('@navio-blocks/shared').NavioBridgeAuditOutgoing>>(
       `/bridge/audit/outgoing?limit=${limit}&offset=${offset}`
     ),
+
+  // p2pmsg / P2P overlay
+  getP2pmsgSummary: () =>
+    fetchJSON<import('@navio-blocks/shared').P2pmsgSummary>('/p2pmsg/summary'),
+  getP2pmsgHistory: (period: string) =>
+    fetchJSON<import('@navio-blocks/shared').P2pmsgHistoryPoint[]>(
+      `/p2pmsg/history?period=${period}`
+    ),
+  getP2pmsgTrading: () =>
+    fetchJSON<import('@navio-blocks/shared').P2pmsgTrading>('/p2pmsg/trading'),
+
+  // Staking / cold staking
+  getStakingSummary: () =>
+    fetchJSON<import('@navio-blocks/shared').StakingSummary>('/staking/summary'),
+  getStakingHistory: (period: string) =>
+    fetchJSON<import('@navio-blocks/shared').StakingHistoryPoint[]>(
+      `/staking/history?period=${period}`
+    ),
+  getStakingActivity: (period: string) =>
+    fetchJSON<import('@navio-blocks/shared').StakingActivityPoint[]>(
+      `/staking/activity?period=${period}`
+    ),
+  getStakingCommitments: (
+    status: 'active' | 'spent' | 'all' = 'active',
+    delegated: '0' | '1' | undefined = undefined,
+    limit = 25,
+    offset = 0,
+  ) =>
+    fetchJSON<import('@navio-blocks/shared').PaginatedResponse<import('@navio-blocks/shared').StakingCommitment>>(
+      `/staking/commitments?status=${status}&limit=${limit}&offset=${offset}${delegated ? `&delegated=${delegated}` : ''}`
+    ),
 };

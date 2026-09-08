@@ -27,13 +27,23 @@ export const TYPE_BAR_COLORS: Record<OutputType, string> = {
   unknown: '#4b5563',
 };
 
+const DELEGATED_STYLE = {
+  bg: 'bg-gradient-to-r from-green-500/20 to-neon-purple/20',
+  text: 'text-green-200',
+  border: 'border-neon-purple/40',
+  label: 'Delegated Stake',
+};
+
 interface OutputTypeBadgeProps {
   type: OutputType;
+  /** Staked commitment delegated to a cold-staking operator. */
+  delegated?: boolean;
   className?: string;
 }
 
-export default function OutputTypeBadge({ type, className = '' }: OutputTypeBadgeProps) {
-  const style = TYPE_STYLES[type] ?? TYPE_STYLES.unknown;
+export default function OutputTypeBadge({ type, delegated = false, className = '' }: OutputTypeBadgeProps) {
+  const style =
+    type === 'stake' && delegated ? DELEGATED_STYLE : TYPE_STYLES[type] ?? TYPE_STYLES.unknown;
   return (
     <span
       className={`inline-block rounded px-2 py-0.5 text-xs font-mono font-medium border ${style.bg} ${style.text} ${style.border} ${className}`}

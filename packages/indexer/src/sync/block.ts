@@ -207,6 +207,40 @@ interface DecodedPredicate {
   metadata?: Record<string, string>;
   nft_id?: string;
   nft_metadata?: Record<string, string>;
+  /** DATA predicate payload length in bytes (op 4 only). */
+  data_len?: number;
+  /**
+   * DATA payload is a stake-delegation blob (cold staking): magic "NVDG" +
+   * version 0x01. The output is a normal staked commitment whose opening is
+   * encrypted to a third-party operator. Amount / operator / reward address
+   * stay hidden; only the fact of delegation is public.
+   */
+  delegation?: boolean;
+}
+
+/** Stake-delegation payload prefix: 'N','V','D','G', version 1 (navio-core blsct/wallet/delegation.cpp). */
+export const DELEGATION_MAGIC_HEX = "4e56444701";
+
+/** True when a raw DATA-predicate payload (without the op byte / length prefix) is a stake delegation. */
+export function isDelegationPayload(payload: Uint8Array): boolean {
+  if (payload.length <= 5 + 48) return false;
+  return Buffer.from(payload.subarray(0, 5)).toString("hex") === DELEGATION_MAGIC_HEX;
+}
+
+/**
+ * True when a full predicate hex (op byte + compact-size length + payload) is a
+ * DATA predicate carrying a stake-delegation payload. Mirrors the SQL migration
+ * in schema.ts, which cannot decode compact sizes and instead accepts the magic
+ * at any of the three possible compact-size widths.
+ */
+export function isDelegationPredicateHex(predicateHex: string | undefined | null): boolean {
+  if (!predicateHex || predicateHex.length < 2 + 2 + DELEGATION_MAGIC_HEX.length) return false;
+  const hex = predicateHex.toLowerCase();
+  if (!hex.startsWith("04")) return false;
+  // compact size: 1 byte (<0xfd), 3 bytes (fd xxxx), 5 bytes (fe xxxxxxxx)
+  const marker = hex.slice(2, 4);
+  const lenWidth = marker === "fd" ? 6 : marker === "fe" ? 10 : 2;
+  return hex.slice(2 + lenWidth, 2 + lenWidth + DELEGATION_MAGIC_HEX.length) === DELEGATION_MAGIC_HEX;
 }
 
 function normalizeHexString(value: unknown): string | undefined {
@@ -319,6 +353,10 @@ function predicateArgsFromDecoded(
   }
   if (predicate.nft_metadata && Object.keys(predicate.nft_metadata).length > 0) {
     args.nft_metadata = predicate.nft_metadata;
+  }
+  if (predicate.op === 4) {
+    if (predicate.data_len != null) args.data_len = predicate.data_len;
+    if (predicate.delegation) args.delegation = true;
   }
 
   return Object.keys(args).length > 0 ? args : undefined;
@@ -548,9 +586,11 @@ function decodePredicate(predicateBytes: Uint8Array): DecodedPredicate | undefin
     }
 
     if (op === 4) {
-      // DATA: op (u8), data(varbytes)
-      reader.readVarBytes();
-      return { op };
+      // DATA: op (u8), data(varbytes). Consensus no-op; the only structured
+      // payload we recognise is the cold-staking delegation blob.
+      const data = reader.readVarBytes();
+      const delegation = isDelegationPayload(data);
+      return { op, data_len: data.length, ...(delegation ? { delegation: true } : {}) };
     }
 
     return { op };
@@ -807,7 +847,12 @@ function classifyOutputType(
   // 1. Coinbase tx outputs
   if (isCoinbaseTx) return "coinbase";
 
-  // 2. Predicate-driven token operations and explicit fee/data predicates.
+  // 2. Staking commitment. Checked BEFORE predicate-driven types: a delegated
+  //    (cold-staked) commitment carries a DATA predicate, and a DATA predicate
+  //    alone would otherwise classify it as an unspendable fee output.
+  if (spk_asm && spk_asm.startsWith("OP_STAKED_COMMITMENT")) return "stake";
+
+  // 3. Predicate-driven token operations and explicit fee/data predicates.
   if (op === 0) {
     const predicateType = predicate?.token_type;
     if (predicateType === "nft") return "nft_create";
@@ -818,15 +863,12 @@ function classifyOutputType(
   if (op === 2) return "nft_mint";
   if (op === 3 || op === 4) return "fee";
 
-  // 3. Fee output: unspendable OP_RETURN/fee script with value > 0.
+  // 4. Fee output: unspendable OP_RETURN/fee script with value > 0.
   if ((spk_type === "unspendable" || spk_type === "nulldata" || spk_type === "fee") && val > 0) return "fee";
 
-  // 4. Zero-value unspendable/fee script → fee (still unspendable)
+  // 5. Zero-value unspendable/fee script → fee (still unspendable)
   //    These are OP_RETURN data carriers; classify as fee (unspendable)
   if (spk_type === "unspendable" || spk_type === "nulldata" || spk_type === "fee") return "fee";
-
-  // 5. Staking commitment
-  if (spk_asm && spk_asm.startsWith("OP_STAKED_COMMITMENT")) return "stake";
 
   // 6. HTLC (atomic swap): OP_IF ... OP_SHA256 ... OP_CHECKLOCKTIMEVERIFY ... OP_ENDIF
   if (spk_asm && spk_asm.includes("OP_SHA256") && spk_asm.includes("OP_CHECKLOCKTIMEVERIFY")) {
@@ -1074,6 +1116,7 @@ export function parseBlock(rpcBlock: Record<string, unknown>, network: NetworkTy
           predicate: predicateLabel,
           predicate_hex: predicateHex,
           predicate_args: predicateArgs,
+          delegated: outputType === "stake" && decodedPredicate?.delegation === true,
           spending_key: fields.spending_key,
           ephemeral_key: fields.ephemeral_key,
           blinding_key: fields.blinding_key,
@@ -1094,6 +1137,7 @@ export function parseBlock(rpcBlock: Record<string, unknown>, network: NetworkTy
           predicate: predicateLabel,
           predicate_hex: predicateHex,
           predicate_args: predicateArgs,
+          delegated: outputType === "stake" && decodedPredicate?.delegation === true,
         });
       }
     }

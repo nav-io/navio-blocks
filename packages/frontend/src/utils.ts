@@ -134,6 +134,9 @@ export function shouldShowPredicateBadge(
   outputType: string | undefined | null,
 ): boolean {
   if (!predicate) return false;
+  // A staked commitment's DATA predicate is the cold-staking delegation blob;
+  // the type badge already says "Delegated Stake", so don't repeat it as DATA.
+  if (outputType === 'stake') return false;
   const fromPredicate = predicateToOutputType(predicate);
   if (!fromPredicate || !outputType) return true;
   return fromPredicate !== outputType;

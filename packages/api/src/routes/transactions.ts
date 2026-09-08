@@ -65,6 +65,9 @@ function outputTypeFromPredicate(predicate: string | undefined): string | undefi
 
 // Remap legacy output_type values that no longer exist in the enum
 function normalizeOutputType(raw: unknown, row?: Record<string, unknown>): string {
+  // A staked commitment wins over its predicate: a delegated (cold-staked)
+  // commitment carries a DATA predicate but is a stake, not a fee output.
+  if (raw === 'stake') return 'stake';
   const predicateType = outputTypeFromPredicate(normalizePredicateLabel(row?.predicate));
   if (predicateType) return predicateType;
 
@@ -136,6 +139,7 @@ function toOutput(row: Record<string, unknown>): Output {
     predicate,
     predicate_hex: typeof row.predicate_hex === 'string' ? row.predicate_hex : undefined,
     predicate_args: parsePredicateArgs(row.predicate_args_json),
+    delegated: normalizedType === 'stake' && Boolean(row.delegated),
   } as unknown as Output;
 }
 
@@ -154,6 +158,7 @@ function toLatestOutput(row: Record<string, unknown>): LatestOutput {
     predicate,
     predicate_hex: typeof row.predicate_hex === 'string' ? row.predicate_hex : undefined,
     predicate_args: parsePredicateArgs(row.predicate_args_json),
+    delegated: normalizedType === 'stake' && Boolean(row.delegated),
   } as unknown as LatestOutput;
 }
 
@@ -286,6 +291,7 @@ const txResponseSchema = {
           predicate: { type: 'string', nullable: true },
           predicate_hex: { type: 'string', nullable: true },
           predicate_args: { type: 'object', nullable: true, additionalProperties: true },
+          delegated: { type: 'boolean' },
           spent: { type: 'boolean' },
           spending_txid: { type: 'string', nullable: true },
           spending_vin: { type: 'integer', nullable: true },
@@ -315,6 +321,7 @@ const outputItemSchema = {
     predicate: { type: 'string', nullable: true },
     predicate_hex: { type: 'string', nullable: true },
     predicate_args: { type: 'object', nullable: true, additionalProperties: true },
+    delegated: { type: 'boolean' },
     block_height: { type: 'integer' },
     timestamp: { type: 'integer' },
   },
@@ -357,6 +364,7 @@ export default async function transactionsRoutes(app: FastifyInstance) {
     return cached(`outputs:stats:${period}:${includeCoinbase}`, 30_000, () => {
 
     const outputTypeCase = `CASE
+           WHEN o.output_type = 'stake' THEN 'stake'
            WHEN UPPER(COALESCE(o.predicate, '')) = 'CREATE_TOKEN' THEN 'token_create'
            WHEN UPPER(COALESCE(o.predicate, '')) IN ('MINT', 'MINT_TOKEN') THEN 'token_mint'
            WHEN UPPER(COALESCE(o.predicate, '')) IN ('NFT_MINT', 'MINT_NFT') THEN 'nft_mint'
@@ -643,6 +651,7 @@ export default async function transactionsRoutes(app: FastifyInstance) {
     const spentFilter = request.query.spent;
 
     const effectiveOutputTypeExpr = `CASE
+      WHEN o.output_type = 'stake' THEN 'stake'
       WHEN UPPER(COALESCE(o.predicate, '')) = 'CREATE_TOKEN' THEN 'token_create'
       WHEN UPPER(COALESCE(o.predicate, '')) IN ('MINT', 'MINT_TOKEN') THEN 'token_mint'
       WHEN UPPER(COALESCE(o.predicate, '')) IN ('NFT_MINT', 'MINT_NFT') THEN 'nft_mint'
@@ -705,7 +714,7 @@ export default async function transactionsRoutes(app: FastifyInstance) {
          o.output_hash, o.txid, o.n, o.value_sat, o.address,
          o.spending_key, o.ephemeral_key, o.blinding_key, o.view_tag,
          o.is_blsct, o.output_type, o.spk_type, o.spk_hex, o.token_id,
-         o.predicate, o.predicate_hex, o.predicate_args_json,
+         o.predicate, o.predicate_hex, o.predicate_args_json, o.delegated,
          t.block_height, b.timestamp, t.raw_json AS tx_raw_json
        FROM outputs o
        JOIN transactions t ON t.txid = o.txid

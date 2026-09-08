@@ -51,6 +51,8 @@ const navLinks = [
   { to: '/outputs', label: 'Outputs' },
   { to: '/tokens', label: 'Tokens' },
   { to: '/network', label: 'Network' },
+  { to: '/staking', label: 'Staking' },
+  { to: '/overlay', label: 'Overlay' },
   { to: '/supply', label: 'Supply' },
   { to: '/price', label: 'Price' },
 ];

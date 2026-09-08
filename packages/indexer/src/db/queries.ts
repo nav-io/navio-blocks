@@ -24,6 +24,8 @@ export interface NavioAuditOutgoingRow {
   spend_tx_hash: string;
   block_height: number;
   amount_sat: string;
+  /** 1 = reconciled 1:1 to burn(s); 0 = unmatched outflow (inconsistency). */
+  matched?: number;
 }
 
 export interface NavioAuditStakeEventRow {
@@ -31,6 +33,14 @@ export interface NavioAuditStakeEventRow {
   event_type: "stake" | "unstake";
   block_height: number;
   amount_sat: string;
+}
+
+/** A burn with no matching payout yet — a pending payout. */
+export interface NavioAuditAwaitingRow {
+  tx_hash: string | null;
+  amount_sat: string;
+  timestamp: number;
+  note: string | null;
 }
 
 export interface NavioAuditMetaRow {
@@ -41,6 +51,38 @@ export interface NavioAuditMetaRow {
   chain_tip: number;
   error_message: string | null;
   updated_at: number;
+  /** Burn↔payout reconciliation snapshot (sats / counts). */
+  settled_sat?: string;
+  awaiting_sat?: string;
+  unmatched_payout_sat?: string;
+  unmatched_payout_count?: number;
+}
+
+/** A single p2pmsg time-series snapshot to persist. */
+export interface StakingSnapshotInsert {
+  timestamp: number;
+  network: string;
+  node_height: number;
+  active_commitments: number;
+  delegated_commitments: number;
+  db_active: number;
+  db_delegated: number;
+}
+
+export interface P2pmsgSnapshotInsert {
+  timestamp: number;
+  network: string;
+  enabled: number;
+  relay_capable_peers: number;
+  total_peers: number;
+  agg_available: number;
+  agg_extra_fee_per_candidate: number;
+  orders_count: number;
+  orders_bytes: number;
+  rfqs_count: number;
+  pings_received: number;
+  identity_pubkey: string | null;
+  inbox_pubkey: string | null;
 }
 
 export class Queries {
@@ -76,6 +118,11 @@ export class Queries {
   private stmtGetSyncState;
   private stmtSetSyncState;
   private stmtInsertBscWnavBurn;
+  private stmtBscWnavBurnsAsc;
+  private stmtDeleteAllNavioAuditAwaiting;
+  private stmtInsertNavioAuditAwaiting;
+  private stmtListNavioAuditAwaiting;
+  private stmtCountNavioAuditAwaiting;
   private stmtDeleteAllNavioAuditOutgoing;
   private stmtInsertNavioAuditOutgoing;
   private stmtUpsertNavioAuditMeta;
@@ -91,6 +138,14 @@ export class Queries {
   private stmtUnstakeTxids;
   private stmtCoinbaseRewardTxids;
   private stmtFeeByTxid;
+  private stmtInsertP2pmsg;
+  private stmtLatestP2pmsg;
+  private stmtP2pmsgAtOrBefore;
+  private stmtP2pmsgHistory;
+  private stmtPruneP2pmsg;
+  private stmtInsertStakingStats;
+  private stmtPruneStakingStats;
+  private stmtStakeCommitmentCounts;
 
   constructor(private db: Database.Database) {
     this.stmtInsertBlock = db.prepare(`
@@ -109,9 +164,9 @@ export class Queries {
 
     this.stmtInsertOutput = db.prepare(`
       INSERT OR REPLACE INTO outputs
-        (output_hash, txid, n, value_sat, address, spending_key, ephemeral_key, blinding_key, view_tag, is_blsct, output_type, spk_type, spk_hex, token_id, predicate, predicate_hex, predicate_args_json)
+        (output_hash, txid, n, value_sat, address, spending_key, ephemeral_key, blinding_key, view_tag, is_blsct, output_type, spk_type, spk_hex, token_id, predicate, predicate_hex, predicate_args_json, delegated)
       VALUES
-        (@output_hash, @txid, @n, @value_sat, @address, @spending_key, @ephemeral_key, @blinding_key, @view_tag, @is_blsct, @output_type, @spk_type, @spk_hex, @token_id, @predicate, @predicate_hex, @predicate_args_json)
+        (@output_hash, @txid, @n, @value_sat, @address, @spending_key, @ephemeral_key, @blinding_key, @view_tag, @is_blsct, @output_type, @spk_type, @spk_hex, @token_id, @predicate, @predicate_hex, @predicate_args_json, @delegated)
     `);
 
     this.stmtInsertInput = db.prepare(`
@@ -263,28 +318,56 @@ export class Queries {
         (@tx_hash, @log_index, @block_number, @timestamp, @from_address, @amount, @note)
     `);
 
+    // Burns are stored already scoped to this deployment's note prefix (the BSC
+    // watcher filters on insert), so no note clause is needed here. Ordered
+    // oldest-first for FIFO reconciliation against payouts.
+    this.stmtBscWnavBurnsAsc = db.prepare(
+      `SELECT amount, timestamp, tx_hash, note FROM bsc_wnav_burns ORDER BY timestamp ASC, block_number ASC, log_index ASC`
+    );
+
+    this.stmtDeleteAllNavioAuditAwaiting = db.prepare(
+      `DELETE FROM navio_audit_awaiting`
+    );
+    this.stmtInsertNavioAuditAwaiting = db.prepare(`
+      INSERT INTO navio_audit_awaiting (tx_hash, amount_sat, timestamp, note)
+      VALUES (@tx_hash, @amount_sat, @timestamp, @note)
+    `);
+    this.stmtListNavioAuditAwaiting = db.prepare(`
+      SELECT tx_hash, amount_sat, timestamp, note
+      FROM navio_audit_awaiting
+      ORDER BY timestamp DESC
+      LIMIT ? OFFSET ?
+    `);
+    this.stmtCountNavioAuditAwaiting = db.prepare(
+      `SELECT COUNT(*) AS count FROM navio_audit_awaiting`
+    );
+
     this.stmtDeleteAllNavioAuditOutgoing = db.prepare(
       `DELETE FROM navio_audit_outgoing`
     );
 
     this.stmtInsertNavioAuditOutgoing = db.prepare(`
-      INSERT INTO navio_audit_outgoing (spend_tx_hash, block_height, amount_sat)
-      VALUES (@spend_tx_hash, @block_height, @amount_sat)
+      INSERT INTO navio_audit_outgoing (spend_tx_hash, block_height, amount_sat, matched)
+      VALUES (@spend_tx_hash, @block_height, @amount_sat, @matched)
     `);
 
     this.stmtUpsertNavioAuditMeta = db.prepare(`
       INSERT OR REPLACE INTO navio_audit_meta
-        (id, balance_sat, earned_rewards_sat, synced_height, chain_tip, error_message, updated_at)
+        (id, balance_sat, earned_rewards_sat, synced_height, chain_tip, error_message, updated_at,
+         settled_sat, awaiting_sat, unmatched_payout_sat, unmatched_payout_count)
       VALUES
-        (1, @balance_sat, @earned_rewards_sat, @synced_height, @chain_tip, @error_message, @updated_at)
+        (1, @balance_sat, @earned_rewards_sat, @synced_height, @chain_tip, @error_message, @updated_at,
+         @settled_sat, @awaiting_sat, @unmatched_payout_sat, @unmatched_payout_count)
     `);
 
     this.stmtGetNavioAuditMeta = db.prepare(
-      `SELECT balance_sat, earned_rewards_sat, synced_height, chain_tip, error_message, updated_at FROM navio_audit_meta WHERE id = 1`
+      `SELECT balance_sat, earned_rewards_sat, synced_height, chain_tip, error_message, updated_at,
+              settled_sat, awaiting_sat, unmatched_payout_sat, unmatched_payout_count
+       FROM navio_audit_meta WHERE id = 1`
     );
 
     this.stmtListNavioAuditOutgoing = db.prepare(`
-      SELECT spend_tx_hash, block_height, amount_sat
+      SELECT spend_tx_hash, block_height, amount_sat, matched
       FROM navio_audit_outgoing
       ORDER BY block_height DESC, spend_tx_hash DESC
       LIMIT ? OFFSET ?
@@ -362,6 +445,54 @@ export class Queries {
     this.stmtDeleteBlockSupply = db.prepare(
       `DELETE FROM block_supply WHERE height = ?`
     );
+
+    this.stmtInsertP2pmsg = db.prepare(`
+      INSERT OR REPLACE INTO p2pmsg_stats
+        (timestamp, network, enabled, relay_capable_peers, total_peers,
+         agg_available, agg_extra_fee_per_candidate, orders_count, orders_bytes,
+         rfqs_count, pings_received, identity_pubkey, inbox_pubkey)
+      VALUES
+        (@timestamp, @network, @enabled, @relay_capable_peers, @total_peers,
+         @agg_available, @agg_extra_fee_per_candidate, @orders_count, @orders_bytes,
+         @rfqs_count, @pings_received, @identity_pubkey, @inbox_pubkey)
+    `);
+
+    this.stmtLatestP2pmsg = db.prepare(
+      `SELECT * FROM p2pmsg_stats WHERE network = ? ORDER BY timestamp DESC LIMIT 1`
+    );
+
+    this.stmtP2pmsgAtOrBefore = db.prepare(
+      `SELECT * FROM p2pmsg_stats
+       WHERE network = ? AND timestamp <= ?
+       ORDER BY timestamp DESC LIMIT 1`
+    );
+
+    this.stmtP2pmsgHistory = db.prepare(
+      `SELECT * FROM p2pmsg_stats
+       WHERE network = ? AND timestamp >= ?
+       ORDER BY timestamp ASC`
+    );
+
+    this.stmtPruneP2pmsg = db.prepare(
+      `DELETE FROM p2pmsg_stats WHERE network = ? AND timestamp < ?`
+    );
+
+    this.stmtInsertStakingStats = db.prepare(`
+      INSERT OR REPLACE INTO staking_stats
+        (timestamp, network, node_height, active_commitments, delegated_commitments, db_active, db_delegated)
+      VALUES
+        (@timestamp, @network, @node_height, @active_commitments, @delegated_commitments, @db_active, @db_delegated)
+    `);
+    this.stmtPruneStakingStats = db.prepare(
+      `DELETE FROM staking_stats WHERE network = ? AND timestamp < ?`
+    );
+    // Unspent staked commitments in the explorer index, split by delegation.
+    this.stmtStakeCommitmentCounts = db.prepare(`
+      SELECT COUNT(*) AS active, COALESCE(SUM(o.delegated), 0) AS delegated
+      FROM outputs o
+      LEFT JOIN inputs i ON i.prev_out = o.output_hash
+      WHERE o.output_type = 'stake' AND i.prev_out IS NULL
+    `);
   }
 
   insertBlock(block: Block): void {
@@ -424,6 +555,7 @@ export class Queries {
         output.predicate_args && Object.keys(output.predicate_args).length > 0
           ? JSON.stringify(output.predicate_args)
           : null,
+      delegated: output.delegated ? 1 : 0,
     });
   }
 
@@ -480,16 +612,32 @@ export class Queries {
   replaceNavioAuditData(
     meta: NavioAuditMetaRow,
     outgoing: NavioAuditOutgoingRow[],
-    stakeEvents: NavioAuditStakeEventRow[] = []
+    stakeEvents: NavioAuditStakeEventRow[] = [],
+    awaiting: NavioAuditAwaitingRow[] = []
   ): void {
     const run = this.db.transaction(
-      (m: NavioAuditMetaRow, rows: NavioAuditOutgoingRow[], stakes: NavioAuditStakeEventRow[]) => {
+      (
+        m: NavioAuditMetaRow,
+        rows: NavioAuditOutgoingRow[],
+        stakes: NavioAuditStakeEventRow[],
+        awaitingRows: NavioAuditAwaitingRow[]
+      ) => {
+        this.stmtDeleteAllNavioAuditAwaiting.run();
+        for (const a of awaitingRows) {
+          this.stmtInsertNavioAuditAwaiting.run({
+            tx_hash: a.tx_hash,
+            amount_sat: a.amount_sat,
+            timestamp: a.timestamp,
+            note: a.note,
+          });
+        }
         this.stmtDeleteAllNavioAuditOutgoing.run();
         for (const r of rows) {
           this.stmtInsertNavioAuditOutgoing.run({
             spend_tx_hash: r.spend_tx_hash,
             block_height: r.block_height,
             amount_sat: r.amount_sat,
+            matched: r.matched ?? 1,
           });
         }
         this.stmtDeleteAllNavioAuditStakeEvents.run();
@@ -508,10 +656,23 @@ export class Queries {
           chain_tip: m.chain_tip,
           error_message: m.error_message,
           updated_at: m.updated_at,
+          settled_sat: m.settled_sat ?? "0",
+          awaiting_sat: m.awaiting_sat ?? "0",
+          unmatched_payout_sat: m.unmatched_payout_sat ?? "0",
+          unmatched_payout_count: m.unmatched_payout_count ?? 0,
         });
       }
     );
-    run(meta, outgoing, stakeEvents);
+    run(meta, outgoing, stakeEvents, awaiting);
+  }
+
+  listNavioAuditAwaiting(limit: number, offset: number): NavioAuditAwaitingRow[] {
+    return this.stmtListNavioAuditAwaiting.all(limit, offset) as NavioAuditAwaitingRow[];
+  }
+
+  countNavioAuditAwaiting(): number {
+    const row = this.stmtCountNavioAuditAwaiting.get() as { count: number } | undefined;
+    return row?.count ?? 0;
   }
 
   /** Set of "txid:n" for every output the explorer classified as a stake. */
@@ -536,6 +697,22 @@ export class Queries {
   coinbaseRewardTxids(): Set<string> {
     const rows = this.stmtCoinbaseRewardTxids.all() as { txid: string }[];
     return new Set(rows.map((r) => r.txid));
+  }
+
+  /** wNAV→Navio burns (amount sats + timestamp + identity), oldest-first, for reconciliation. */
+  bscWnavBurnsAsc(): { amount_sat: bigint; timestamp: number; tx_hash: string; note: string | null }[] {
+    const rows = this.stmtBscWnavBurnsAsc.all() as {
+      amount: string;
+      timestamp: number;
+      tx_hash: string;
+      note: string | null;
+    }[];
+    return rows.map((r) => ({
+      amount_sat: BigInt(r.amount),
+      timestamp: r.timestamp,
+      tx_hash: r.tx_hash,
+      note: r.note,
+    }));
   }
 
   /** Explicit BLSCT network fee (sats) per txid, from PAY_FEE outputs. */
@@ -565,6 +742,10 @@ export class Queries {
       chain_tip: cur?.chain_tip ?? 0,
       error_message: message,
       updated_at: now,
+      settled_sat: cur?.settled_sat ?? "0",
+      awaiting_sat: cur?.awaiting_sat ?? "0",
+      unmatched_payout_sat: cur?.unmatched_payout_sat ?? "0",
+      unmatched_payout_count: cur?.unmatched_payout_count ?? 0,
     });
   }
 
@@ -828,5 +1009,70 @@ export class Queries {
       is_blsct: (row.is_blsct as number) === 1,
       chainwork: row.chainwork as string,
     };
+  }
+
+  // --- p2pmsg / P2P overlay stats ------------------------------------------
+
+  /** Persist one p2pmsg snapshot, then prune rows older than ~30 days. */
+  insertP2pmsgSnapshot(snapshot: P2pmsgSnapshotInsert): void {
+    this.stmtInsertP2pmsg.run({
+      timestamp: snapshot.timestamp,
+      network: snapshot.network,
+      enabled: snapshot.enabled,
+      relay_capable_peers: snapshot.relay_capable_peers,
+      total_peers: snapshot.total_peers,
+      agg_available: snapshot.agg_available,
+      agg_extra_fee_per_candidate: snapshot.agg_extra_fee_per_candidate,
+      orders_count: snapshot.orders_count,
+      orders_bytes: snapshot.orders_bytes,
+      rfqs_count: snapshot.rfqs_count,
+      pings_received: snapshot.pings_received,
+      identity_pubkey: snapshot.identity_pubkey,
+      inbox_pubkey: snapshot.inbox_pubkey,
+    });
+    const cutoff = snapshot.timestamp - 30 * 24 * 60 * 60;
+    this.stmtPruneP2pmsg.run(snapshot.network, cutoff);
+  }
+
+  /** Persist one staked-set snapshot and prune samples older than two years. */
+  insertStakingSnapshot(snapshot: StakingSnapshotInsert): void {
+    this.stmtInsertStakingStats.run(snapshot);
+    const cutoff = snapshot.timestamp - 2 * 365 * 24 * 60 * 60;
+    this.stmtPruneStakingStats.run(snapshot.network, cutoff);
+  }
+
+  /** Unspent staked commitments (total / delegated) as seen by the index. */
+  stakeCommitmentCounts(): { active: number; delegated: number } {
+    const row = this.stmtStakeCommitmentCounts.get() as
+      | { active: number; delegated: number }
+      | undefined;
+    return { active: row?.active ?? 0, delegated: row?.delegated ?? 0 };
+  }
+
+  /** Latest snapshot for a network, or undefined when none recorded. */
+  latestP2pmsgStats(
+    network: string
+  ): Record<string, unknown> | undefined {
+    return this.stmtLatestP2pmsg.get(network) as
+      | Record<string, unknown>
+      | undefined;
+  }
+
+  /** Snapshot at or before a timestamp (for trend comparisons). */
+  p2pmsgStatsAtOrBefore(
+    network: string,
+    timestamp: number
+  ): Record<string, unknown> | undefined {
+    return this.stmtP2pmsgAtOrBefore.get(network, timestamp) as
+      | Record<string, unknown>
+      | undefined;
+  }
+
+  /** All snapshots for a network at or after `sinceTs`, ascending. */
+  p2pmsgHistory(network: string, sinceTs: number): Record<string, unknown>[] {
+    return this.stmtP2pmsgHistory.all(network, sinceTs) as Record<
+      string,
+      unknown
+    >[];
   }
 }

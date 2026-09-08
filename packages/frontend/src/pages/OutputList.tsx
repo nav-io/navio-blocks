@@ -268,7 +268,7 @@ export default function OutputList() {
                     </td>
                     <td className="py-3 pr-4">
                       <div className="space-y-1">
-                        {o.output_type && <OutputTypeBadge type={o.output_type} />}
+                        {o.output_type && <OutputTypeBadge type={o.output_type} delegated={o.delegated} />}
                         {shouldShowPredicateBadge(o.predicate, o.output_type) && (
                           <span className="inline-block rounded px-2 py-0.5 text-[10px] font-mono font-medium border border-amber-500/30 bg-amber-500/15 text-amber-200">
                             {o.predicate}
