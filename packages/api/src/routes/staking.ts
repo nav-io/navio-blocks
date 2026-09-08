@@ -202,12 +202,12 @@ export default async function stakingRoutes(app: FastifyInstance) {
     const bucket = Math.max(300, Math.floor(interval / 6));
 
     const rows = queryAll<{ timestamp: number; active: number; delegated: number }>(
-      `SELECT (timestamp / ?) * ? AS timestamp,
+      `SELECT (timestamp / CAST(? AS INTEGER)) * CAST(? AS INTEGER) AS timestamp,
               AVG(active_commitments) AS active,
               AVG(delegated_commitments) AS delegated
        FROM staking_stats
        WHERE network = ? AND timestamp >= ?
-       GROUP BY timestamp / ?
+       GROUP BY timestamp / CAST(? AS INTEGER)
        ORDER BY timestamp`,
       bucket, bucket, network, cutoff, bucket,
     );
@@ -247,24 +247,24 @@ export default async function stakingRoutes(app: FastifyInstance) {
       const delegatedExpr = delegatedColumnExists() ? 'o.delegated' : '0';
 
       const created = queryAll<{ timestamp: number; created: number; delegated: number }>(
-        `SELECT (b.timestamp / ?) * ? AS timestamp,
+        `SELECT (b.timestamp / CAST(? AS INTEGER)) * CAST(? AS INTEGER) AS timestamp,
                 COUNT(*) AS created,
                 COALESCE(SUM(${delegatedExpr}), 0) AS delegated
          FROM outputs o
          JOIN transactions t ON t.txid = o.txid
          JOIN blocks b ON b.height = t.block_height
          WHERE o.output_type = 'stake' AND b.timestamp >= ?
-         GROUP BY b.timestamp / ?`,
+         GROUP BY b.timestamp / CAST(? AS INTEGER)`,
         interval, interval, cutoff, interval,
       );
       const spent = queryAll<{ timestamp: number; spent: number }>(
-        `SELECT (sb.timestamp / ?) * ? AS timestamp, COUNT(*) AS spent
+        `SELECT (sb.timestamp / CAST(? AS INTEGER)) * CAST(? AS INTEGER) AS timestamp, COUNT(*) AS spent
          FROM outputs o
          JOIN inputs i ON i.prev_out = o.output_hash
          JOIN transactions st ON st.txid = i.txid
          JOIN blocks sb ON sb.height = st.block_height
          WHERE o.output_type = 'stake' AND sb.timestamp >= ?
-         GROUP BY sb.timestamp / ?`,
+         GROUP BY sb.timestamp / CAST(? AS INTEGER)`,
         interval, interval, cutoff, interval,
       );
 

@@ -123,14 +123,14 @@ export default async function priceRoutes(app: FastifyInstance) {
     // Group by time bucket and take the last entry in each bucket
     const rows = queryAll<PriceRow>(
       `SELECT
-        (timestamp / ?) * ? AS timestamp,
+        (timestamp / CAST(? AS INTEGER)) * CAST(? AS INTEGER) AS timestamp,
         AVG(price_usd) AS price_usd,
         AVG(price_btc) AS price_btc,
         AVG(volume_24h) AS volume_24h,
         AVG(market_cap) AS market_cap
       FROM price_history
       WHERE timestamp >= ?
-      GROUP BY timestamp / ?
+      GROUP BY timestamp / CAST(? AS INTEGER)
       ORDER BY timestamp`,
       interval,
       interval,

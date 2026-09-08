@@ -199,7 +199,7 @@ export default async function p2pmsgRoutes(app: FastifyInstance) {
       rfqs_count: number;
     }>(
       `SELECT
-        (timestamp / ?) * ? AS timestamp,
+        (timestamp / CAST(? AS INTEGER)) * CAST(? AS INTEGER) AS timestamp,
         AVG(relay_capable_peers) AS relay_capable_peers,
         AVG(total_peers) AS total_peers,
         AVG(agg_available) AS agg_available,
@@ -207,7 +207,7 @@ export default async function p2pmsgRoutes(app: FastifyInstance) {
         AVG(rfqs_count) AS rfqs_count
       FROM p2pmsg_stats
       WHERE network = ? AND timestamp >= ?
-      GROUP BY timestamp / ?
+      GROUP BY timestamp / CAST(? AS INTEGER)
       ORDER BY timestamp`,
       interval,
       interval,
