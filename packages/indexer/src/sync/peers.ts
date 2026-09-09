@@ -1044,8 +1044,21 @@ async function crawlPeersViaP2P(
     known.set(key, merged);
   };
 
+  // Gossip `time` of each queued endpoint, so each round can pull the most
+  // recently seen addresses first. FIFO order wasted the handshake budget on
+  // stale entries (typically ~4 reachable of 130 attempted).
+  const queueTime = new Map<string, number>();
+
   for (let round = 1; round <= PEER_DISCOVERY_ROUNDS; round++) {
     if (queue.length === 0) break;
+
+    if (round > 1) {
+      queue.sort(
+        (a, b) =>
+          (queueTime.get(formatAddress(b.host, b.port)) ?? 0) -
+          (queueTime.get(formatAddress(a.host, a.port)) ?? 0)
+      );
+    }
 
     const batch: SeedEndpoint[] = [];
     while (batch.length < PEER_DISCOVERY_BATCH_SIZE && queue.length > 0) {
@@ -1101,6 +1114,7 @@ async function crawlPeersViaP2P(
 
         queue.push({ host: addr.address, port: addr.port });
         queued.add(key);
+        queueTime.set(key, addr.time);
       }
     }
 
@@ -1245,6 +1259,42 @@ export async function updatePeers(
     if (probeTargets.length > 0) {
       console.log(
         `[peers] Connectivity probes: reachable=${reachableCount}/${probeTargets.length} (timeout=${PEER_CONNECT_TIMEOUT_MS}ms, concurrency=${PEER_CONNECT_CONCURRENCY})`
+      );
+    }
+
+    // Peers that answered the TCP probe are shown as "listening"; fetch their
+    // user agent with a real version handshake when the crawl didn't reach them.
+    const versionTargets = undiscovered.filter(
+      ({ addr, entry }) =>
+        connectivity.get(addr) === true &&
+        !(entry.subversion && entry.subversion.length > 0)
+    );
+    if (versionTargets.length > 0) {
+      const magic = getNetworkMagic(network);
+      const handshakes = await mapLimit(
+        versionTargets,
+        P2P_CRAWL_CONCURRENCY,
+        async ({ addr, entry }) => {
+          const parsed = parseAddressPort(addr);
+          if (!parsed) return null;
+          const result = await queryPeerAddressesP2P(parsed.host, parsed.port, magic);
+          return { entry, result };
+        }
+      );
+      let learned = 0;
+      const nowSec = Math.floor(Date.now() / 1000);
+      for (const hs of handshakes) {
+        if (!hs) continue;
+        if (hs.result.handshake) {
+          hs.entry.handshakeAt = Math.max(hs.entry.handshakeAt ?? 0, nowSec);
+        }
+        if (hs.result.subversion) {
+          hs.entry.subversion = hs.result.subversion;
+          learned++;
+        }
+      }
+      console.log(
+        `[peers] Version handshakes: learned=${learned}/${versionTargets.length} listening peers`
       );
     }
 

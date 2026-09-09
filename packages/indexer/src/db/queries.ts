@@ -229,7 +229,9 @@ export class Queries {
       UPDATE peers
       SET
         addr = @addr,
-        subversion = @subversion,
+        -- Gossip-only sightings carry no user agent; keep the version we learned
+        -- from an earlier handshake instead of blanking it every refresh.
+        subversion = COALESCE(NULLIF(@subversion, ''), subversion),
         services = @services,
         country = @country,
         city = @city,
