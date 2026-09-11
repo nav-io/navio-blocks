@@ -68,6 +68,8 @@ export const api = {
     fetchJSON<import('@navio-blocks/shared').NftDetail>(
       `/nfts/${encodeURIComponent(tokenId)}/${encodeURIComponent(index)}?limit=${limit}&offset=${offset}`
     ),
+  getOutputTimeline: (period = '30d') =>
+    fetchJSON<import('@navio-blocks/shared').OutputTimelinePoint[]>(`/outputs/timeline?period=${period}`),
   getOutputTypeStats: (includeCoinbase = false, period = '30d') => {
     const params = new URLSearchParams();
     if (includeCoinbase) params.set('include_coinbase', '1');

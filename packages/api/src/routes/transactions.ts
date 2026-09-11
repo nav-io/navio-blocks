@@ -9,6 +9,7 @@ import type {
   LatestOutput,
   OutputDetail,
   OutputTypeStats,
+  OutputTimelinePoint,
   StakingInfo,
   PaginatedResponse,
 } from '@navio-blocks/shared';
@@ -327,7 +328,95 @@ const outputItemSchema = {
   },
 };
 
+const OUTPUT_TYPE_CASE_SQL = `CASE
+           WHEN o.output_type = 'stake' THEN 'stake'
+           WHEN UPPER(COALESCE(o.predicate, '')) = 'CREATE_TOKEN' THEN 'token_create'
+           WHEN UPPER(COALESCE(o.predicate, '')) IN ('MINT', 'MINT_TOKEN') THEN 'token_mint'
+           WHEN UPPER(COALESCE(o.predicate, '')) IN ('NFT_MINT', 'MINT_NFT') THEN 'nft_mint'
+           WHEN UPPER(COALESCE(o.predicate, '')) IN ('PAY_FEE', 'DATA') THEN 'fee'
+           ELSE CASE COALESCE(o.output_type, 'unknown')
+             WHEN 'blsct' THEN 'transfer'
+             WHEN 'native' THEN 'transfer'
+             WHEN 'unstake' THEN 'transfer'
+             WHEN 'unknown' THEN 'transfer'
+             WHEN 'data' THEN 'fee'
+             ELSE COALESCE(o.output_type, 'transfer')
+           END
+         END`;
+
+/** Bucket width (seconds) and lookback for the outputs timeline. */
+function outputTimelineWindow(period: string): { cutoff: number; interval: number } | null {
+  const now = Math.floor(Date.now() / 1000);
+  switch (period) {
+    case '24h': return { cutoff: now - 86400, interval: 3600 };
+    case '7d':  return { cutoff: now - 7 * 86400, interval: 6 * 3600 };
+    case '30d': return { cutoff: now - 30 * 86400, interval: 86400 };
+    case '1y':  return { cutoff: now - 365 * 86400, interval: 7 * 86400 };
+    case 'all': return { cutoff: 0, interval: 7 * 86400 };
+    default: return null;
+  }
+}
+
 export default async function transactionsRoutes(app: FastifyInstance) {
+  // GET /api/outputs/timeline — New outputs created per time bucket
+  app.get<{
+    Querystring: { period?: string };
+  }>('/outputs/timeline', {
+    schema: {
+      tags: ['Outputs'],
+      description:
+        'New outputs (UTXOs) created per time bucket by block time, split into coinbase / fee / user outputs. Buckets: 24h hourly, 7d 6-hourly, 30d daily, 1y and all weekly.',
+      querystring: {
+        type: 'object',
+        properties: {
+          period: { type: 'string', enum: ['24h', '7d', '30d', '1y', 'all'], default: '30d' },
+        },
+      },
+      response: {
+        200: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              timestamp: { type: 'integer' },
+              total: { type: 'integer' },
+              coinbase: { type: 'integer' },
+              fee: { type: 'integer' },
+              user: { type: 'integer' },
+            },
+          },
+        },
+      },
+    },
+  }, async (request): Promise<OutputTimelinePoint[]> => {
+    const period = request.query.period ?? '30d';
+    const window = outputTimelineWindow(period);
+    if (!window) return [];
+    return cached(`outputs:timeline:${period}`, 60_000, () => {
+      const { cutoff, interval } = window;
+      const rows = queryAll<{ timestamp: number; total: number; coinbase: number; fee: number }>(
+        `SELECT (b.timestamp / CAST(? AS INTEGER)) * CAST(? AS INTEGER) AS timestamp,
+                COUNT(*) AS total,
+                SUM(CASE WHEN ${OUTPUT_TYPE_CASE_SQL} = 'coinbase' THEN 1 ELSE 0 END) AS coinbase,
+                SUM(CASE WHEN ${OUTPUT_TYPE_CASE_SQL} = 'fee' THEN 1 ELSE 0 END) AS fee
+         FROM outputs o
+         JOIN transactions t ON t.txid = o.txid
+         JOIN blocks b ON b.height = t.block_height
+         WHERE o.output_hash <> '' AND b.timestamp >= ?
+         GROUP BY b.timestamp / CAST(? AS INTEGER)
+         ORDER BY timestamp`,
+        interval, interval, cutoff, interval,
+      );
+      return rows.map((r) => ({
+        timestamp: r.timestamp,
+        total: r.total,
+        coinbase: r.coinbase,
+        fee: r.fee,
+        user: Math.max(0, r.total - r.coinbase - r.fee),
+      }));
+    });
+  });
+
   // GET /api/outputs/stats — Output type distribution
   app.get<{
     Querystring: { include_coinbase?: string; period?: string };

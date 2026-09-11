@@ -94,6 +94,17 @@ export interface OutputDetail extends Output {
 }
 
 // Output type distribution stats
+/** New outputs created per time bucket (by block time). */
+export interface OutputTimelinePoint {
+  timestamp: number;
+  /** All outputs created in the bucket. */
+  total: number;
+  coinbase: number;
+  fee: number;
+  /** total - coinbase - fee: outputs created by user transactions. */
+  user: number;
+}
+
 export interface OutputTypeStats {
   type: OutputType;
   count: number;

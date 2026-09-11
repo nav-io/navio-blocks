@@ -7,7 +7,8 @@ import { Pagination } from '../components/Pagination';
 import GlowCard from '../components/GlowCard';
 import OutputTypeBadge, { TYPE_BAR_COLORS } from '../components/OutputTypeBadge';
 import Loader from '../components/Loader';
-import type { OutputType, LatestOutput, OutputTypeStats, PaginatedResponse } from '@navio-blocks/shared';
+import PriceChart from '../components/PriceChart';
+import type { OutputType, LatestOutput, OutputTypeStats, OutputTimelinePoint, PaginatedResponse } from '@navio-blocks/shared';
 
 const ALL_TYPES: OutputType[] = [
   'transfer', 'fee', 'coinbase', 'stake', 'htlc',
@@ -36,6 +37,11 @@ export default function OutputList() {
   const { data: statsData } = useApi<OutputTypeStats[]>(
     () => api.getOutputTypeStats(includeCoinbaseStats, statPeriod),
     [includeCoinbaseStats, statPeriod],
+  );
+
+  const { data: timeline } = useApi<OutputTimelinePoint[]>(
+    () => api.getOutputTimeline(statPeriod),
+    [statPeriod],
   );
 
   const tokenModeParam = tokenMode === 'all' ? undefined : tokenMode;
@@ -73,6 +79,16 @@ export default function OutputList() {
 
   // Distribution chart
   const maxCount = statsData ? Math.max(...statsData.map((s) => s.count), 1) : 1;
+
+  // New-outputs timeline: the coinbase switch applies here too. Fee outputs are
+  // burned (unspendable) and excluded from the "user" series either way.
+  const timelineChart = (timeline ?? []).map((p) => ({
+    timestamp: p.timestamp,
+    value: includeCoinbaseStats ? p.total : p.user,
+  }));
+  const timelineSum = timelineChart.reduce((s, p) => s + p.value, 0);
+  const timelineBucketLabel =
+    statPeriod === '24h' ? 'per hour' : statPeriod === '7d' ? 'per 6h' : statPeriod === '30d' ? 'per day' : 'per week';
 
   return (
     <div className="space-y-6">
@@ -146,6 +162,25 @@ export default function OutputList() {
                 </span>
               </div>
             ))}
+          </div>
+
+          {/* New outputs over time */}
+          <div className="mt-6 pt-5 border-t border-white/10">
+            <div className="flex items-baseline justify-between mb-2">
+              <h2 className="text-sm font-semibold uppercase tracking-wider text-white/60">
+                New Outputs Created
+              </h2>
+              <span className="text-xs font-mono text-white/40">
+                {formatNumber(timelineSum)} {includeCoinbaseStats ? 'outputs' : 'user outputs'} · {timelineBucketLabel}
+              </span>
+            </div>
+            {timelineChart.length > 1 ? (
+              <div className="-mx-6 -mb-6 overflow-hidden rounded-b-xl">
+                <PriceChart data={timelineChart} color={includeCoinbaseStats ? '#ec4899' : '#4FB3FF'} />
+              </div>
+            ) : (
+              <p className="text-white/30 text-xs font-mono py-6 text-center">Not enough data for this period.</p>
+            )}
           </div>
         </GlowCard>
       )}
