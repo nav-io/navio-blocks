@@ -17,6 +17,8 @@ interface PriceChartProps {
   medianColor?: string;
   projectionData?: { timestamp: number; value: number }[];
   projectionColor?: string;
+  /** Format the value axis as whole numbers (counts) instead of 2-decimal prices. */
+  integer?: boolean;
 }
 
 function toChartData(data: { timestamp: number; value: number }[]): Array<{
@@ -58,6 +60,7 @@ export default function PriceChart({
   medianColor = 'rgba(255, 255, 255, 0.45)',
   projectionData,
   projectionColor = 'rgba(79, 179, 255, 0.9)',
+  integer = false,
 }: PriceChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -98,6 +101,7 @@ export default function PriceChart({
     });
 
     const seriesOptions: DeepPartial<AreaSeriesOptions> = {
+      ...(integer ? { priceFormat: { type: 'price', precision: 0, minMove: 1 } } : {}),
       lineColor: color,
       topColor: `${color}40`,
       bottomColor: `${color}05`,
@@ -158,7 +162,7 @@ export default function PriceChart({
       medianSeriesRef.current = null;
       projectionSeriesRef.current = null;
     };
-  }, [color, emaColor, medianColor, projectionColor]);
+  }, [color, emaColor, medianColor, projectionColor, integer]);
 
   // Update data when it changes
   useEffect(() => {

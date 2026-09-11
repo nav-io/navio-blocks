@@ -82,10 +82,17 @@ export default function OutputList() {
 
   // New-outputs timeline: the coinbase switch applies here too. Fee outputs are
   // burned (unspendable) and excluded from the "user" series either way.
-  const timelineChart = (timeline ?? []).map((p) => ({
-    timestamp: p.timestamp,
-    value: includeCoinbaseStats ? p.total : p.user,
-  }));
+  // The last bucket is still filling (current hour/day/week) and would read as
+  // a cliff, so it is dropped from the chart.
+  const bucketSeconds =
+    statPeriod === '24h' ? 3600 : statPeriod === '7d' ? 6 * 3600 : statPeriod === '30d' ? 86400 : 7 * 86400;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const timelineChart = (timeline ?? [])
+    .filter((p) => p.timestamp + bucketSeconds <= nowSec)
+    .map((p) => ({
+      timestamp: p.timestamp,
+      value: includeCoinbaseStats ? p.total : p.user,
+    }));
   const timelineSum = timelineChart.reduce((s, p) => s + p.value, 0);
   const timelineBucketLabel =
     statPeriod === '24h' ? 'per hour' : statPeriod === '7d' ? 'per 6h' : statPeriod === '30d' ? 'per day' : 'per week';
@@ -176,7 +183,7 @@ export default function OutputList() {
             </div>
             {timelineChart.length > 1 ? (
               <div className="-mx-6 -mb-6 overflow-hidden rounded-b-xl">
-                <PriceChart data={timelineChart} color={includeCoinbaseStats ? '#ec4899' : '#4FB3FF'} />
+                <PriceChart data={timelineChart} color={includeCoinbaseStats ? '#ec4899' : '#4FB3FF'} integer />
               </div>
             ) : (
               <p className="text-white/30 text-xs font-mono py-6 text-center">Not enough data for this period.</p>
