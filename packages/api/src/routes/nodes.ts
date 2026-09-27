@@ -37,10 +37,18 @@ const SERVICE_FLAG_NAMES: Record<number, string> = {
   25: 'P2PMSG_LEAF',
   26: 'P2PMSG_ARCHIVE',
   27: 'P2PMSG_V2',
+  28: 'P2P_WS',
 };
 
-/** Navio-specific bits (reserved-experiment range), in display order. */
-const NAVIO_SERVICE_FLAGS = ['P2PMSG_V2', 'P2PMSG_ARCHIVE', 'P2PMSG_LEAF', 'P2PMSG'];
+/** Tracked bits in display order: Navio-specific ones plus BIP324 (P2P_V2). */
+const NAVIO_SERVICE_FLAGS = [
+  'P2P_WS',
+  'P2P_V2',
+  'P2PMSG_V2',
+  'P2PMSG_ARCHIVE',
+  'P2PMSG_LEAF',
+  'P2PMSG',
+];
 
 const SERVICE_FLAG_ORDER = Object.entries(SERVICE_FLAG_NAMES)
   .sort(([a], [b]) => Number(a) - Number(b))
@@ -77,6 +85,28 @@ function parseServiceFlags(services: string | null | undefined): string[] {
     return i < 0 ? SERVICE_FLAG_ORDER.length : i;
   };
   return [...flags].sort((a, b) => order(a) - order(b) || a.localeCompare(b));
+}
+
+/** WebSocket endpoint from the indexer's `wsport=` / `wsurl=` tags. */
+function parseWsEndpoint(
+  services: string | null | undefined
+): { port: number; url?: string } | undefined {
+  if (!services) return undefined;
+  let port = 0;
+  let url: string | undefined;
+  for (const raw of services.split(',')) {
+    const part = raw.trim();
+    if (part.startsWith('wsport=')) port = Number(part.slice(7));
+    else if (part.startsWith('wsurl=')) {
+      try {
+        url = decodeURIComponent(part.slice(6));
+      } catch {
+        url = undefined;
+      }
+    }
+  }
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) return undefined;
+  return url && /^wss?:\/\//.test(url) ? { port, url } : { port };
 }
 
 const NODE_ADDR_DNS_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -333,6 +363,14 @@ export default async function nodesRoutes(app: FastifyInstance) {
                   reachable: { type: 'boolean', nullable: true },
                   last_handshake: { type: 'integer', nullable: true },
                   service_flags: { type: 'array', items: { type: 'string' } },
+                  ws_endpoint: {
+                    type: 'object',
+                    nullable: true,
+                    properties: {
+                      port: { type: 'integer' },
+                      url: { type: 'string' },
+                    },
+                  },
                 },
               },
             },
@@ -360,6 +398,7 @@ export default async function nodesRoutes(app: FastifyInstance) {
           ? peer.last_handshake
           : undefined,
       service_flags: parseServiceFlags(peer.services),
+      ws_endpoint: parseWsEndpoint(peer.services),
     }));
 
     const totalNodes = peers.length;

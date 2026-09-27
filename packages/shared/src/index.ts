@@ -207,6 +207,12 @@ export interface Peer {
    * whatever form the indexer stored them in. Unknown bits show as BIT_<n>.
    */
   service_flags?: string[];
+  /**
+   * WebSocket P2P endpoint the node announced (navio-core `wsendpoint`,
+   * NODE_P2P_WS). `url` is set when it sits behind a reverse proxy; otherwise
+   * dial ws://<ip>:<port>.
+   */
+  ws_endpoint?: { port: number; url?: string };
 }
 
 /** One time bucket of node counts (averaged indexer peer-crawl snapshots). */
@@ -225,7 +231,10 @@ export interface NodeStats {
   non_listening_nodes: number;
   countries: { country: string; count: number }[];
   versions: { version: string; count: number }[];
-  /** Nodes advertising each Navio-specific service bit (p2pmsg overlay). */
+  /**
+   * Nodes advertising each tracked service bit: the Navio-specific ones
+   * (p2pmsg overlay, WebSocket P2P) plus BIP324 v2 transport.
+   */
   navio_services: { flag: string; count: number }[];
   peers: Peer[];
 }

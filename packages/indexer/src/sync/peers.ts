@@ -125,6 +125,11 @@ interface P2PCrawlResult {
   handshake: boolean;
   subversion?: string;
   protocolVersion?: number;
+  /** Service bits from the peer's own `version` message (authoritative). */
+  services?: bigint;
+  /** WebSocket P2P endpoint from a `wsendpoint` message (NODE_P2P_WS). */
+  wsPort?: number;
+  wsUrl?: string;
   addresses: KnownNodeAddress[];
 }
 
@@ -812,21 +817,55 @@ function parseAddrV2Payload(payload: Buffer): KnownNodeAddress[] {
 
 function parseVersionInfo(
   payload: Buffer
-): { protocolVersion: number | undefined; subversion: string } {
+): { protocolVersion: number | undefined; services?: bigint; subversion: string } {
   if (payload.length < 80) return { protocolVersion: undefined, subversion: "" };
   const protocolVersion = payload.readInt32LE(0);
+  const services = payload.readBigUInt64LE(4);
   const userAgentVar = decodeVarInt(payload, 80);
-  if (!userAgentVar) return { protocolVersion, subversion: "" };
+  if (!userAgentVar) return { protocolVersion, services, subversion: "" };
   const length = Number(userAgentVar.value);
   if (userAgentVar.next + length > payload.length) {
-    return { protocolVersion, subversion: "" };
+    return { protocolVersion, services, subversion: "" };
   }
   return {
     protocolVersion,
+    services,
     subversion: payload
       .subarray(userAgentVar.next, userAgentVar.next + length)
       .toString("utf8"),
   };
+}
+
+/**
+ * Parse a navio-core `wsendpoint` payload: uint16 port, then a var-string URL
+ * (empty when the listener is dialable at ws://<peer ip>:<port>).
+ */
+function parseWsEndpoint(payload: Buffer): { port: number; url: string } | null {
+  if (payload.length < 3) return null;
+  const port = payload.readUInt16LE(0);
+  const lenVar = decodeVarInt(payload, 2);
+  if (!lenVar || port === 0) return null;
+  const length = Number(lenVar.value);
+  if (length > 256 || lenVar.next + length > payload.length) return null;
+  const url = payload.subarray(lenVar.next, lenVar.next + length).toString("utf8");
+  if (url.length > 0 && !/^wss?:\/\//.test(url)) return null;
+  return { port, url };
+}
+
+/**
+ * services CSV for a peer we handshook with: its own service bits (decimal),
+ * protocol version and WebSocket endpoint tags. `wsurl` is URI-encoded so it
+ * can't break the CSV.
+ */
+function handshakeServiceParts(result: P2PCrawlResult): string[] {
+  const parts: string[] = [];
+  if (typeof result.services === "bigint") parts.push(result.services.toString());
+  if (Number.isFinite(result.protocolVersion)) parts.push(`proto=${result.protocolVersion}`);
+  if (result.wsPort) {
+    parts.push(`wsport=${result.wsPort}`);
+    if (result.wsUrl) parts.push(`wsurl=${encodeURIComponent(result.wsUrl)}`);
+  }
+  return parts;
 }
 
 async function queryPeerAddressesP2P(
@@ -844,6 +883,8 @@ async function queryPeerAddressesP2P(
     let settled = false;
     let remoteSubversion = "";
     let remoteProtocolVersion: number | undefined;
+    let remoteServices: bigint | undefined;
+    let wsEndpoint: { port: number; url: string } | null = null;
     const discovered = new Map<string, KnownNodeAddress>();
 
     const finish = (): void => {
@@ -856,6 +897,9 @@ async function queryPeerAddressesP2P(
         handshake,
         subversion: remoteSubversion || undefined,
         protocolVersion: remoteProtocolVersion,
+        services: remoteServices,
+        wsPort: wsEndpoint?.port,
+        wsUrl: wsEndpoint?.url || undefined,
         addresses: Array.from(discovered.values()),
       });
     };
@@ -918,6 +962,7 @@ async function queryPeerAddressesP2P(
 
           const info = parseVersionInfo(msg.payload);
           if (info.subversion) remoteSubversion = info.subversion;
+          if (typeof info.services === "bigint") remoteServices = info.services;
           if (Number.isFinite(info.protocolVersion)) {
             remoteProtocolVersion = info.protocolVersion;
           }
@@ -929,6 +974,8 @@ async function queryPeerAddressesP2P(
           }
         } else if (msg.command === "ping") {
           send("pong", msg.payload);
+        } else if (msg.command === "wsendpoint") {
+          wsEndpoint = parseWsEndpoint(msg.payload);
         } else if (msg.command === "addr") {
           ingest(parseAddrPayload(msg.payload));
         } else if (msg.command === "addrv2") {
@@ -1002,6 +1049,17 @@ async function mapLimit<T, R>(
   return results;
 }
 
+/**
+ * Services from our own handshake (tagged `proto=`) are authoritative and carry
+ * the WebSocket endpoint; never let a later gossiped addr entry replace them.
+ */
+function pickServices(existing: string, incoming: string): string {
+  if (incoming.length === 0) return existing;
+  const fromHandshake = (s: string): boolean => /(^|,)proto=/.test(s);
+  if (fromHandshake(existing) && !fromHandshake(incoming)) return existing;
+  return incoming;
+}
+
 async function crawlPeersViaP2P(
   network: NetworkType
 ): Promise<{ known: KnownNodeAddress[]; crawlReachable: number }> {
@@ -1033,7 +1091,7 @@ async function crawlPeersViaP2P(
     const merged: KnownNodeAddress = {
       address: existing.address,
       port: existing.port,
-      services: entry.services.length > 0 ? entry.services : existing.services,
+      services: pickServices(existing.services, entry.services),
       time: Math.max(existing.time, entry.time),
       subversion:
         entry.subversion && entry.subversion.length > 0
@@ -1088,10 +1146,7 @@ async function crawlPeersViaP2P(
       }
 
       if (net.isIP(endpoint.host) !== 0) {
-        const endpointServicesParts: string[] = [];
-        if (Number.isFinite(result.protocolVersion)) {
-          endpointServicesParts.push(`proto=${result.protocolVersion}`);
-        }
+        const endpointServicesParts = handshakeServiceParts(result);
         const nowSec = Math.floor(Date.now() / 1000);
         ingestKnown({
           address: endpoint.host,
@@ -1259,11 +1314,23 @@ export async function updatePeers(
       const inbound = rp.inbound === true;
       const rpcReachable = !inbound;
 
+      // navio-core reports the peer's announced WebSocket endpoint
+      // (wsendpoint) as ws_port / ws_url.
+      const wsPort = toOptionalNumberSafe(rp.ws_port);
+      const wsUrl = toStringSafe(rp.ws_url, "");
+      const servicesWithWs = [
+        rawServices,
+        ...(wsPort ? [`wsport=${wsPort}`] : []),
+        ...(wsPort && wsUrl ? [`wsurl=${encodeURIComponent(wsUrl)}`] : []),
+      ]
+        .filter((part) => part.length > 0)
+        .join(",");
+
       const peer: Peer = {
         id: peerId,
         addr,
         subversion: toStringSafe(rp.subver, ""),
-        services: withReachabilityTag(rawServices, rpcReachable),
+        services: withReachabilityTag(servicesWithWs, rpcReachable),
         country: toStringSafe(geo.country, "") || undefined,
         city: toStringSafe(geo.city, "") || undefined,
         lat: toOptionalNumberSafe(geo.lat),
@@ -1349,6 +1416,10 @@ export async function updatePeers(
         if (!hs) continue;
         if (hs.result.handshake) {
           hs.entry.handshakeAt = Math.max(hs.entry.handshakeAt ?? 0, nowSec);
+          // The peer's own version message beats gossiped service bits.
+          if (typeof hs.result.services === "bigint") {
+            hs.entry.services = handshakeServiceParts(hs.result).join(",");
+          }
         }
         if (hs.result.subversion) {
           hs.entry.subversion = hs.result.subversion;

@@ -215,8 +215,21 @@ function VersionBars({ versions }: { versions: { version: string; count: number 
   );
 }
 
-/** Navio-specific service bits (navio-core src/protocol.h), display order. */
+/**
+ * Tracked service bits (navio-core src/protocol.h), display order: the
+ * Navio-specific ones plus BIP324 v2 transport.
+ */
 const NAVIO_SERVICES: Record<string, { label: string; description: string; className: string }> = {
+  P2P_WS: {
+    label: 'ws',
+    description: 'Accepts P2P connections over WebSocket (browser / SDK clients)',
+    className: 'text-neon-pink border-neon-pink/40 bg-neon-pink/10',
+  },
+  P2P_V2: {
+    label: 'BIP324',
+    description: 'Supports the BIP324 encrypted v2 P2P transport',
+    className: 'text-neon-purple border-neon-purple/40 bg-neon-purple/10',
+  },
   P2PMSG_V2: {
     label: 'p2pmsg v2',
     description: 'Relays the encrypted p2pmsg overlay (envelope v2)',
@@ -239,22 +252,49 @@ const NAVIO_SERVICES: Record<string, { label: string; description: string; class
   },
 };
 
-function NavioServiceBadges({ flags }: { flags: string[] }) {
-  const navio = Object.keys(NAVIO_SERVICES).filter((f) => flags.includes(f));
+/** Where to dial a node's WebSocket listener, from its wsendpoint announcement. */
+function wsEndpointUrl(peer: Peer): string | undefined {
+  const ws = peer.ws_endpoint;
+  if (!ws) return undefined;
+  if (ws.url) return ws.url;
+  const host = hostFromAddr(peer.addr);
+  return `ws://${host.includes(':') ? `[${host}]` : host}:${ws.port}`;
+}
+
+function NavioServiceBadges({ flags, peer }: { flags: string[]; peer?: Peer }) {
+  // A wsendpoint announcement implies the WebSocket bit even when the stored
+  // flags came from gossip that predates it.
+  const hasWs = flags.includes('P2P_WS') || !!peer?.ws_endpoint;
+  const navio = Object.keys(NAVIO_SERVICES).filter((f) =>
+    f === 'P2P_WS' ? hasWs : flags.includes(f),
+  );
   if (navio.length === 0) {
     return <span className="text-xs text-white/30">--</span>;
   }
+  const wsUrl = peer ? wsEndpointUrl(peer) : undefined;
   return (
     <div className="flex flex-wrap gap-1">
-      {navio.map((f) => (
-        <span
-          key={f}
-          title={`${f}: ${NAVIO_SERVICES[f].description}`}
-          className={`px-1.5 py-0.5 rounded border font-mono text-[10px] whitespace-nowrap ${NAVIO_SERVICES[f].className}`}
-        >
-          {NAVIO_SERVICES[f].label}
-        </span>
-      ))}
+      {navio.map((f) => {
+        let label = NAVIO_SERVICES[f].label;
+        let title = `${f}: ${NAVIO_SERVICES[f].description}`;
+        if (f === 'P2P_WS') {
+          if (wsUrl) {
+            label = `${wsUrl.startsWith('wss://') ? 'wss' : 'ws'} :${peer?.ws_endpoint?.port}`;
+            title += `\n${wsUrl}`;
+          } else {
+            title += '\n(endpoint not announced yet)';
+          }
+        }
+        return (
+          <span
+            key={f}
+            title={title}
+            className={`px-1.5 py-0.5 rounded border font-mono text-[10px] whitespace-nowrap ${NAVIO_SERVICES[f].className}`}
+          >
+            {label}
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -685,7 +725,7 @@ export default function Network() {
 
         <GlowCard hover={false}>
           <h3 className="text-sm font-semibold uppercase tracking-wider text-white/60 mb-4">
-            Navio Service Bits
+            Service Bits
           </h3>
           {loading ? (
             <div className="space-y-3">
@@ -812,7 +852,7 @@ export default function Network() {
                   {grouping === 'subnet' ? 'Peers' : 'Version'}
                 </th>
                 <th className="px-4 py-3 text-[10px] uppercase tracking-wider text-white/40 font-medium">
-                  Navio Services
+                  Services
                 </th>
                 <th className="px-4 py-3 text-[10px] uppercase tracking-wider text-white/40 font-medium">
                   Country
@@ -854,7 +894,14 @@ export default function Network() {
                     </td>
                     <td className="px-4 py-3">
                       <NavioServiceBadges
-                        flags={[...new Set(group.peers.flatMap((p) => p.service_flags ?? []))]}
+                        flags={[
+                          ...new Set(
+                            group.peers.flatMap((p) => [
+                              ...(p.service_flags ?? []),
+                              ...(p.ws_endpoint ? ['P2P_WS'] : []),
+                            ]),
+                          ),
+                        ]}
                       />
                     </td>
                     <td className="px-4 py-3 text-xs text-white/60">
@@ -887,7 +934,7 @@ export default function Network() {
                       className="px-4 py-3"
                       title={(peer.service_flags ?? []).join(', ') || undefined}
                     >
-                      <NavioServiceBadges flags={peer.service_flags ?? []} />
+                      <NavioServiceBadges flags={peer.service_flags ?? []} peer={peer} />
                     </td>
                     <td className="px-4 py-3 text-xs text-white/60">
                       {peer.country || '--'}
