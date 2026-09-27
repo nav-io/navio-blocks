@@ -202,6 +202,11 @@ export interface Peer {
    * timestamps.
    */
   last_handshake?: number;
+  /**
+   * Advertised service flags decoded to names (e.g. NETWORK, P2PMSG_V2),
+   * whatever form the indexer stored them in. Unknown bits show as BIT_<n>.
+   */
+  service_flags?: string[];
 }
 
 /** One time bucket of node counts (averaged indexer peer-crawl snapshots). */
@@ -220,6 +225,8 @@ export interface NodeStats {
   non_listening_nodes: number;
   countries: { country: string; count: number }[];
   versions: { version: string; count: number }[];
+  /** Nodes advertising each Navio-specific service bit (p2pmsg overlay). */
+  navio_services: { flag: string; count: number }[];
   peers: Peer[];
 }
 

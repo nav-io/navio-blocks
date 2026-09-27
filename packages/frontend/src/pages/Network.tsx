@@ -215,6 +215,83 @@ function VersionBars({ versions }: { versions: { version: string; count: number 
   );
 }
 
+/** Navio-specific service bits (navio-core src/protocol.h), display order. */
+const NAVIO_SERVICES: Record<string, { label: string; description: string; className: string }> = {
+  P2PMSG_V2: {
+    label: 'p2pmsg v2',
+    description: 'Relays the encrypted p2pmsg overlay (envelope v2)',
+    className: 'text-neon-blue border-neon-blue/40 bg-neon-blue/10',
+  },
+  P2PMSG_ARCHIVE: {
+    label: 'archive',
+    description: 'Retains relayed p2pmsg envelopes and serves them back on getp2pmsgs',
+    className: 'text-amber-300 border-amber-300/40 bg-amber-300/10',
+  },
+  P2PMSG_LEAF: {
+    label: 'leaf',
+    description: 'Receives p2pmsg fluff traffic but never relays it (do not stem to it)',
+    className: 'text-green-400 border-green-400/40 bg-green-400/10',
+  },
+  P2PMSG: {
+    label: 'p2pmsg v1',
+    description: 'Relays the encrypted p2pmsg overlay (legacy envelope v1)',
+    className: 'text-white/60 border-white/20 bg-white/5',
+  },
+};
+
+function NavioServiceBadges({ flags }: { flags: string[] }) {
+  const navio = Object.keys(NAVIO_SERVICES).filter((f) => flags.includes(f));
+  if (navio.length === 0) {
+    return <span className="text-xs text-white/30">--</span>;
+  }
+  return (
+    <div className="flex flex-wrap gap-1">
+      {navio.map((f) => (
+        <span
+          key={f}
+          title={`${f}: ${NAVIO_SERVICES[f].description}`}
+          className={`px-1.5 py-0.5 rounded border font-mono text-[10px] whitespace-nowrap ${NAVIO_SERVICES[f].className}`}
+        >
+          {NAVIO_SERVICES[f].label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function NavioServiceBars({
+  services,
+  totalNodes,
+}: {
+  services: { flag: string; count: number }[];
+  totalNodes: number;
+}) {
+  return (
+    <div className="space-y-3">
+      {services.map(({ flag, count }) => {
+        const meta = NAVIO_SERVICES[flag];
+        const pct = totalNodes > 0 ? (count / totalNodes) * 100 : 0;
+        return (
+          <div key={flag} title={meta?.description}>
+            <div className="flex items-center justify-between mb-1">
+              <span className="font-mono text-xs text-white/70 truncate mr-2">{flag}</span>
+              <span className="font-mono text-xs text-white/40 shrink-0">
+                {formatNumber(count)} · {pct.toFixed(1)}%
+              </span>
+            </div>
+            <div className="h-2 rounded-full bg-white/5 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-neon-pink via-neon-purple to-neon-blue transition-all duration-500"
+                style={{ width: `${Math.max(pct, count > 0 ? 2 : 0)}%` }}
+              />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function CountryBars({ countries }: { countries: { country: string; count: number }[] }) {
   const top = countries.slice(0, 10);
   const max = top.length > 0 ? top[0].count : 1;
@@ -330,7 +407,7 @@ function StakingSection({ staking }: { staking: StakingInfo }) {
 function SkeletonRow() {
   return (
     <tr className="border-b border-white/5">
-      {Array.from({ length: 6 }, (_, i) => (
+      {Array.from({ length: 7 }, (_, i) => (
         <td key={i} className="px-4 py-3">
           <div className="skeleton h-4 rounded w-3/4" />
         </td>
@@ -586,8 +663,8 @@ export default function Network() {
         <NodeMap peers={mapData.peers} />
       ) : null}
 
-      {/* Version Distribution + Countries side by side */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* Version Distribution + Navio services + Countries side by side */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <GlowCard hover={false}>
           <h3 className="text-sm font-semibold uppercase tracking-wider text-white/60 mb-4">
             Version Distribution
@@ -603,6 +680,24 @@ export default function Network() {
             </div>
           ) : stats ? (
             <VersionBars versions={stats.versions} />
+          ) : null}
+        </GlowCard>
+
+        <GlowCard hover={false}>
+          <h3 className="text-sm font-semibold uppercase tracking-wider text-white/60 mb-4">
+            Navio Service Bits
+          </h3>
+          {loading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 4 }, (_, i) => (
+                <div key={i}>
+                  <div className="skeleton h-3 rounded w-1/3 mb-1" />
+                  <div className="skeleton h-2 rounded" />
+                </div>
+              ))}
+            </div>
+          ) : stats ? (
+            <NavioServiceBars services={stats.navio_services ?? []} totalNodes={stats.total_nodes} />
           ) : null}
         </GlowCard>
 
@@ -717,6 +812,9 @@ export default function Network() {
                   {grouping === 'subnet' ? 'Peers' : 'Version'}
                 </th>
                 <th className="px-4 py-3 text-[10px] uppercase tracking-wider text-white/40 font-medium">
+                  Navio Services
+                </th>
+                <th className="px-4 py-3 text-[10px] uppercase tracking-wider text-white/40 font-medium">
                   Country
                 </th>
                 <th className="px-4 py-3 text-[10px] uppercase tracking-wider text-white/40 font-medium">
@@ -754,6 +852,11 @@ export default function Network() {
                         </span>
                       )}
                     </td>
+                    <td className="px-4 py-3">
+                      <NavioServiceBadges
+                        flags={[...new Set(group.peers.flatMap((p) => p.service_flags ?? []))]}
+                      />
+                    </td>
                     <td className="px-4 py-3 text-xs text-white/60">
                       {group.country || '--'}
                     </td>
@@ -780,6 +883,12 @@ export default function Network() {
                     <td className="px-4 py-3 font-mono text-xs text-white/60">
                       {peer.subversion}
                     </td>
+                    <td
+                      className="px-4 py-3"
+                      title={(peer.service_flags ?? []).join(', ') || undefined}
+                    >
+                      <NavioServiceBadges flags={peer.service_flags ?? []} />
+                    </td>
                     <td className="px-4 py-3 text-xs text-white/60">
                       {peer.country || '--'}
                     </td>
@@ -793,7 +902,7 @@ export default function Network() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-white/30 text-sm">
+                  <td colSpan={7} className="px-4 py-8 text-center text-white/30 text-sm">
                     No peers match the current filters.
                   </td>
                 </tr>

@@ -25,6 +25,60 @@ function parseReachableFlag(services: string | null | undefined): boolean | unde
   return undefined;
 }
 
+/** Service bit → name, as navio-core's serviceFlagToStr (src/protocol.cpp). */
+const SERVICE_FLAG_NAMES: Record<number, string> = {
+  0: 'NETWORK',
+  2: 'BLOOM',
+  3: 'WITNESS',
+  6: 'COMPACT_FILTERS',
+  10: 'NETWORK_LIMITED',
+  11: 'P2P_V2',
+  24: 'P2PMSG',
+  25: 'P2PMSG_LEAF',
+  26: 'P2PMSG_ARCHIVE',
+  27: 'P2PMSG_V2',
+};
+
+/** Navio-specific bits (reserved-experiment range), in display order. */
+const NAVIO_SERVICE_FLAGS = ['P2PMSG_V2', 'P2PMSG_ARCHIVE', 'P2PMSG_LEAF', 'P2PMSG'];
+
+const SERVICE_FLAG_ORDER = Object.entries(SERVICE_FLAG_NAMES)
+  .sort(([a], [b]) => Number(a) - Number(b))
+  .map(([, name]) => name);
+
+function bitName(bit: number): string {
+  return SERVICE_FLAG_NAMES[bit] ?? `BIT_${bit}`;
+}
+
+/**
+ * Decode the peer's services CSV into flag names. The indexer stores either
+ * names from getpeerinfo (`NETWORK,WITNESS,P2PMSG`, where an older node prints
+ * `UNKNOWN[2^27]` for bits it predates) or a raw decimal bitmask from the P2P
+ * crawl (`150995977`), alongside `key=value` tags that are skipped here.
+ */
+function parseServiceFlags(services: string | null | undefined): string[] {
+  if (!services) return [];
+  const flags = new Set<string>();
+  for (const raw of services.split(',')) {
+    const part = raw.trim();
+    if (!part || part.includes('=')) continue;
+    if (/^\d+$/.test(part)) {
+      let mask = BigInt(part);
+      for (let bit = 0; mask > 0n; bit++, mask >>= 1n) {
+        if (mask & 1n) flags.add(bitName(bit));
+      }
+      continue;
+    }
+    const unknown = /^UNKNOWN\[2\^(\d+)\]$/.exec(part);
+    flags.add(unknown ? bitName(Number(unknown[1])) : part.toUpperCase());
+  }
+  const order = (f: string): number => {
+    const i = SERVICE_FLAG_ORDER.indexOf(f);
+    return i < 0 ? SERVICE_FLAG_ORDER.length : i;
+  };
+  return [...flags].sort((a, b) => order(a) - order(b) || a.localeCompare(b));
+}
+
 const NODE_ADDR_DNS_CACHE_TTL_MS = 10 * 60 * 1000;
 
 interface ParsedEndpoint {
@@ -251,6 +305,16 @@ export default async function nodesRoutes(app: FastifyInstance) {
                 },
               },
             },
+            navio_services: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  flag: { type: 'string' },
+                  count: { type: 'integer' },
+                },
+              },
+            },
             peers: {
               type: 'array',
               items: {
@@ -268,6 +332,7 @@ export default async function nodesRoutes(app: FastifyInstance) {
                   first_seen: { type: 'integer' },
                   reachable: { type: 'boolean', nullable: true },
                   last_handshake: { type: 'integer', nullable: true },
+                  service_flags: { type: 'array', items: { type: 'string' } },
                 },
               },
             },
@@ -294,6 +359,7 @@ export default async function nodesRoutes(app: FastifyInstance) {
         typeof peer.last_handshake === 'number' && peer.last_handshake > 0
           ? peer.last_handshake
           : undefined,
+      service_flags: parseServiceFlags(peer.services),
     }));
 
     const totalNodes = peers.length;
@@ -302,6 +368,9 @@ export default async function nodesRoutes(app: FastifyInstance) {
 
     const countryMap = new Map<string, number>();
     const versionMap = new Map<string, number>();
+    const navioServiceMap = new Map<string, number>(
+      NAVIO_SERVICE_FLAGS.map((flag) => [flag, 0]),
+    );
 
     for (const peer of peers) {
       const country = peer.country ?? 'Unknown';
@@ -313,6 +382,11 @@ export default async function nodesRoutes(app: FastifyInstance) {
       const version = peer.subversion?.trim();
       if (version) {
         versionMap.set(version, (versionMap.get(version) ?? 0) + 1);
+      }
+
+      for (const flag of peer.service_flags ?? []) {
+        const n = navioServiceMap.get(flag);
+        if (n !== undefined) navioServiceMap.set(flag, n + 1);
       }
 
       if (peer.reachable === true) listeningNodes++;
@@ -333,6 +407,10 @@ export default async function nodesRoutes(app: FastifyInstance) {
       non_listening_nodes: nonListeningNodes,
       countries,
       versions,
+      navio_services: Array.from(navioServiceMap.entries()).map(([flag, count]) => ({
+        flag,
+        count,
+      })),
       peers,
     };
   });
