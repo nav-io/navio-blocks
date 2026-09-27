@@ -1393,10 +1393,16 @@ export async function updatePeers(
 
     // Peers that answered the TCP probe are shown as "listening"; fetch their
     // user agent with a real version handshake when the crawl didn't reach them.
+    // Also re-handshake when the service bits we hold only came from addr
+    // gossip (no `proto=` tag): other nodes relay whatever bits a peer
+    // advertised when they first learned it, so a node that turns on a service
+    // (e.g. -p2pmsgarchive) would otherwise keep its old badges until the
+    // gossip catches up, which can take a day.
     const versionTargets = undiscovered.filter(
       ({ addr, entry }) =>
         connectivity.get(addr) === true &&
-        !(entry.subversion && entry.subversion.length > 0)
+        (!(entry.subversion && entry.subversion.length > 0) ||
+          !/(^|,)proto=/.test(entry.services))
     );
     if (versionTargets.length > 0) {
       const magic = getNetworkMagic(network);
