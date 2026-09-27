@@ -1,8 +1,15 @@
 import * as net from 'node:net';
 import { lookup } from 'node:dns/promises';
 import { FastifyInstance } from 'fastify';
-import { queryAll } from '../db.js';
-import type { Peer, NodeStats, NodeMapData } from '@navio-blocks/shared';
+import { queryAll, queryOne } from '../db.js';
+import { currentNetwork } from '../context.js';
+import type {
+  Peer,
+  NodeStats,
+  NodeMapData,
+  NodeHistoryPoint,
+  ChartPeriod,
+} from '@navio-blocks/shared';
 
 /**
  * Read the `reachable=` flag from a peer's services CSV string.
@@ -140,7 +147,78 @@ async function dedupePeersByCanonicalAddress(peers: Peer[]): Promise<Peer[]> {
   return Array.from(deduped.values()).sort((a, b) => b.last_seen - a.last_seen);
 }
 
+/** Lookback window and bucket size per chart period. */
+const HISTORY_WINDOWS: Record<ChartPeriod, { span: number; bucket: number }> = {
+  '24h': { span: 86400, bucket: 1800 },          // 30 min (crawl runs every 10 min)
+  '7d': { span: 7 * 86400, bucket: 3600 },       // hourly
+  '30d': { span: 30 * 86400, bucket: 6 * 3600 }, // 6-hourly
+  '1y': { span: 365 * 86400, bucket: 86400 },    // daily
+};
+
+/** True when the node_stats table exists (older DBs may predate it). */
+function nodeStatsTableExists(): boolean {
+  try {
+    const row = queryOne<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'node_stats'`,
+    );
+    return (row?.n ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
 export default async function nodesRoutes(app: FastifyInstance) {
+  // GET /api/nodes/history — total / listening / active node counts over time
+  app.get<{ Querystring: { period?: ChartPeriod } }>('/nodes/history', {
+    schema: {
+      tags: ['Nodes'],
+      description: 'Total, listening and active (3h) node counts over time, from indexer peer-crawl snapshots',
+      querystring: {
+        type: 'object',
+        properties: {
+          period: { type: 'string', enum: ['24h', '7d', '30d', '1y'], default: '7d' },
+        },
+      },
+      response: {
+        200: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              timestamp: { type: 'integer' },
+              total: { type: 'integer' },
+              listening: { type: 'integer' },
+              active: { type: 'integer' },
+            },
+          },
+        },
+      },
+    },
+  }, async (request): Promise<NodeHistoryPoint[]> => {
+    if (!nodeStatsTableExists()) return [];
+    const period = (request.query.period ?? '7d') as ChartPeriod;
+    const { span, bucket } = HISTORY_WINDOWS[period] ?? HISTORY_WINDOWS['7d'];
+    const cutoff = Math.floor(Date.now() / 1000) - span;
+
+    const rows = queryAll<{ timestamp: number; total: number; listening: number; active: number }>(
+      `SELECT (timestamp / CAST(? AS INTEGER)) * CAST(? AS INTEGER) AS timestamp,
+              AVG(total) AS total,
+              AVG(listening) AS listening,
+              AVG(active) AS active
+       FROM node_stats
+       WHERE network = ? AND timestamp >= ?
+       GROUP BY timestamp / CAST(? AS INTEGER)
+       ORDER BY timestamp`,
+      bucket, bucket, currentNetwork(), cutoff, bucket,
+    );
+    return rows.map((r) => ({
+      timestamp: r.timestamp,
+      total: Math.round(r.total),
+      listening: Math.round(r.listening),
+      active: Math.round(r.active),
+    }));
+  });
+
   // GET /api/nodes — Peer statistics with aggregations
   app.get('/nodes', {
     schema: {

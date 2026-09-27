@@ -8,7 +8,15 @@ import StatCard from '../components/StatCard';
 import Loader from '../components/Loader';
 import TimeAgo from '../components/TimeAgo';
 import NodeMap from '../components/NodeMap';
-import type { NodeStats, NodeMapData, Peer, StakingInfo } from '@navio-blocks/shared';
+import PriceChart from '../components/PriceChart';
+import type {
+  NodeStats,
+  NodeMapData,
+  NodeHistoryPoint,
+  Peer,
+  StakingInfo,
+  ChartPeriod,
+} from '@navio-blocks/shared';
 
 /**
  * A peer is "active" only when we've personally interacted with it (RPC
@@ -376,6 +384,78 @@ function PresenceBadge({ state }: { state: PresenceState }) {
   );
 }
 
+const HISTORY_PERIODS: ChartPeriod[] = ['24h', '7d', '30d', '1y'];
+
+const NODE_SERIES = {
+  total: '#4FB3FF',
+  active: '#22c55e',
+  listening: '#E040A0',
+};
+
+function NodeHistoryChart() {
+  const [period, setPeriod] = useState<ChartPeriod>('7d');
+  const { data: history } = useApi<NodeHistoryPoint[]>(
+    () => api.getNodeHistory(period),
+    [period],
+  );
+
+  const points = history ?? [];
+  const total = points.map((p) => ({ timestamp: p.timestamp, value: p.total }));
+  const active = points.map((p) => ({ timestamp: p.timestamp, value: p.active }));
+  const listening = points.map((p) => ({ timestamp: p.timestamp, value: p.listening }));
+
+  return (
+    <GlowCard hover={false}>
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <h3 className="text-sm font-semibold uppercase tracking-wider text-white/60">
+          Nodes Over Time
+        </h3>
+        <div className="flex items-center gap-3 text-xs font-mono text-white/50">
+          <span className="flex items-center gap-1.5">
+            <span className="w-3 h-0.5" style={{ background: NODE_SERIES.total }} />Total
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-3 border-t-2 border-dashed" style={{ borderColor: NODE_SERIES.active }} />Active (3h)
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-3 border-t-2 border-dotted" style={{ borderColor: NODE_SERIES.listening }} />Listening
+          </span>
+        </div>
+        <div className="flex items-center gap-1 ml-auto">
+          {HISTORY_PERIODS.map((p) => (
+            <button
+              key={p}
+              onClick={() => setPeriod(p)}
+              className={`px-3 py-1 rounded-full text-xs font-mono font-medium transition-all ${
+                period === p
+                  ? 'bg-gradient-to-r from-neon-pink to-neon-purple text-white shadow-glow-pink'
+                  : 'bg-white/5 text-white/50 hover:bg-white/10 hover:text-white/70'
+              }`}
+            >
+              {p}
+            </button>
+          ))}
+        </div>
+      </div>
+      {points.length > 1 ? (
+        <PriceChart
+          data={total}
+          color={NODE_SERIES.total}
+          emaData={active}
+          emaColor={NODE_SERIES.active}
+          medianData={listening}
+          medianColor={NODE_SERIES.listening}
+          integer
+        />
+      ) : (
+        <div className="h-[300px] flex items-center justify-center">
+          <p className="text-white/30 text-sm font-mono">Collecting node history…</p>
+        </div>
+      )}
+    </GlowCard>
+  );
+}
+
 type StatusFilter = 'all' | 'listening' | 'active';
 type GroupingMode = 'peer' | 'subnet';
 
@@ -495,6 +575,9 @@ export default function Network() {
           </>
         ) : null}
       </div>
+
+      {/* Node counts over time */}
+      <NodeHistoryChart />
 
       {/* Node Map */}
       {mapLoading ? (

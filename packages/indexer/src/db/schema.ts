@@ -236,6 +236,18 @@ export function initDatabase(dbPath: string): Database.Database {
       PRIMARY KEY (network, timestamp)
     );
     CREATE INDEX IF NOT EXISTS idx_staking_stats_network_ts ON staking_stats(network, timestamp);
+
+    -- Node-count snapshot taken after each peer crawl (deduped by IP, same
+    -- rules as /api/nodes): total known, listening (reachable) and active
+    -- (listening or handshook within 3h) nodes.
+    CREATE TABLE IF NOT EXISTS node_stats (
+      timestamp  INTEGER NOT NULL,
+      network    TEXT    NOT NULL,
+      total      INTEGER NOT NULL DEFAULT 0,
+      listening  INTEGER NOT NULL DEFAULT 0,
+      active     INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (network, timestamp)
+    );
   `);
 
   // Lightweight migrations for existing DBs.

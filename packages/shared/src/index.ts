@@ -204,6 +204,14 @@ export interface Peer {
   last_handshake?: number;
 }
 
+/** One time bucket of node counts (averaged indexer peer-crawl snapshots). */
+export interface NodeHistoryPoint {
+  timestamp: number;
+  total: number;
+  listening: number;
+  active: number;
+}
+
 export interface NodeStats {
   total_nodes: number;
   /** Peers that accept inbound connections on their advertised port. */

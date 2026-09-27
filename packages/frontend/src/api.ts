@@ -101,6 +101,10 @@ export const api = {
   // Nodes
   getNodes: () =>
     fetchJSON<import('@navio-blocks/shared').NodeStats>('/nodes'),
+  getNodeHistory: (period: string) =>
+    fetchJSON<import('@navio-blocks/shared').NodeHistoryPoint[]>(
+      `/nodes/history?period=${period}`
+    ),
   getNodeMap: () =>
     fetchJSON<import('@navio-blocks/shared').NodeMapData>('/nodes/map'),
 

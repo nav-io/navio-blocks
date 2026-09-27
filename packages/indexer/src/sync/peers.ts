@@ -1134,6 +1134,68 @@ async function crawlPeersViaP2P(
   return { known: Array.from(known.values()), crawlReachable };
 }
 
+/** Mirrors the frontend's "Active (3h)" window on the Network page. */
+const ACTIVE_WINDOW_SECONDS = 3 * 60 * 60;
+
+/**
+ * Count nodes the way /api/nodes does — one node per IP, preferring a
+ * listening (reachable=1) row — and store total / listening / active.
+ */
+async function recordNodeSnapshot(
+  queries: Queries,
+  network: NetworkType,
+  now: number
+): Promise<void> {
+  const rows = queries.peerPresence();
+  const reachableOf = (services: string | null): boolean | undefined => {
+    for (const part of (services ?? "").split(",")) {
+      const p = part.trim();
+      if (p === "reachable=1") return true;
+      if (p === "reachable=0") return false;
+    }
+    return undefined;
+  };
+  const rank = (r: boolean | undefined): number => (r === true ? 2 : r === false ? 1 : 0);
+
+  const byIp = new Map<string, (typeof rows)[number]>();
+  for (const row of rows) {
+    const canonical = await canonicalizePeerAddress(row.addr);
+    const key = canonical?.ip ?? row.addr;
+    const existing = byIp.get(key);
+    if (
+      !existing ||
+      rank(reachableOf(row.services)) > rank(reachableOf(existing.services)) ||
+      (rank(reachableOf(row.services)) === rank(reachableOf(existing.services)) &&
+        row.last_seen > existing.last_seen)
+    ) {
+      byIp.set(key, row);
+    }
+  }
+
+  let listening = 0;
+  let active = 0;
+  for (const row of byIp.values()) {
+    if (reachableOf(row.services) === true) {
+      listening++;
+      active++;
+    } else if (
+      typeof row.last_handshake === "number" &&
+      row.last_handshake > 0 &&
+      now - row.last_handshake <= ACTIVE_WINDOW_SECONDS
+    ) {
+      active++;
+    }
+  }
+
+  queries.insertNodeSnapshot({
+    timestamp: now,
+    network,
+    total: byIp.size,
+    listening,
+    active,
+  });
+}
+
 export async function updatePeers(
   rpc: RpcClient,
   queries: Queries,
@@ -1355,6 +1417,8 @@ export async function updatePeers(
 
     const cutoff = now - 7 * 24 * 60 * 60;
     queries.deleteOldPeers(cutoff);
+
+    await recordNodeSnapshot(queries, network, Math.floor(Date.now() / 1000));
 
     console.log(`[peers] Peer update complete, ${seenAddrs.size} total addresses`);
   } catch (err) {

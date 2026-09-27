@@ -69,6 +69,14 @@ export interface StakingSnapshotInsert {
   db_delegated: number;
 }
 
+export interface NodeSnapshotInsert {
+  timestamp: number;
+  network: string;
+  total: number;
+  listening: number;
+  active: number;
+}
+
 export interface P2pmsgSnapshotInsert {
   timestamp: number;
   network: string;
@@ -146,6 +154,9 @@ export class Queries {
   private stmtInsertStakingStats;
   private stmtPruneStakingStats;
   private stmtStakeCommitmentCounts;
+  private stmtInsertNodeStats;
+  private stmtPruneNodeStats;
+  private stmtPeerPresence;
 
   constructor(private db: Database.Database) {
     this.stmtInsertBlock = db.prepare(`
@@ -487,6 +498,16 @@ export class Queries {
     `);
     this.stmtPruneStakingStats = db.prepare(
       `DELETE FROM staking_stats WHERE network = ? AND timestamp < ?`
+    );
+    this.stmtInsertNodeStats = db.prepare(`
+      INSERT OR REPLACE INTO node_stats (timestamp, network, total, listening, active)
+      VALUES (@timestamp, @network, @total, @listening, @active)
+    `);
+    this.stmtPruneNodeStats = db.prepare(
+      `DELETE FROM node_stats WHERE network = ? AND timestamp < ?`
+    );
+    this.stmtPeerPresence = db.prepare(
+      `SELECT addr, services, last_seen, last_handshake FROM peers`
     );
     // Unspent staked commitments in the explorer index, split by delegation.
     this.stmtStakeCommitmentCounts = db.prepare(`
@@ -1041,6 +1062,28 @@ export class Queries {
     this.stmtInsertStakingStats.run(snapshot);
     const cutoff = snapshot.timestamp - 2 * 365 * 24 * 60 * 60;
     this.stmtPruneStakingStats.run(snapshot.network, cutoff);
+  }
+
+  /** Persist one node-count snapshot and prune samples older than two years. */
+  insertNodeSnapshot(snapshot: NodeSnapshotInsert): void {
+    this.stmtInsertNodeStats.run(snapshot);
+    const cutoff = snapshot.timestamp - 2 * 365 * 24 * 60 * 60;
+    this.stmtPruneNodeStats.run(snapshot.network, cutoff);
+  }
+
+  /** Minimal per-peer presence fields used to count nodes. */
+  peerPresence(): {
+    addr: string;
+    services: string | null;
+    last_seen: number;
+    last_handshake: number | null;
+  }[] {
+    return this.stmtPeerPresence.all() as {
+      addr: string;
+      services: string | null;
+      last_seen: number;
+      last_handshake: number | null;
+    }[];
   }
 
   /** Unspent staked commitments (total / delegated) as seen by the index. */
