@@ -37,7 +37,9 @@ const SERVICE_FLAG_NAMES: Record<number, string> = {
   25: 'P2PMSG_LEAF',
   26: 'P2PMSG_ARCHIVE',
   27: 'P2PMSG_V2',
-  28: 'P2P_WS',
+  28: 'OUTKEYS',
+  29: 'OUTKEYS_PIR',
+  30: 'P2P_WS',
 };
 
 /** Tracked bits in display order: Navio-specific ones plus BIP324 (P2P_V2). */
