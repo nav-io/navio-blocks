@@ -1189,6 +1189,9 @@ async function crawlPeersViaP2P(
   return { known: Array.from(known.values()), crawlReachable };
 }
 
+/** Peers not seen for this long are dropped (and never inserted). */
+const PEER_RETENTION_SECONDS = 7 * 24 * 60 * 60;
+
 /** Mirrors the frontend's "Active (3h)" window on the Network page. */
 const ACTIVE_WINDOW_SECONDS = 3 * 60 * 60;
 
@@ -1201,7 +1204,7 @@ async function recordNodeSnapshot(
   network: NetworkType,
   now: number
 ): Promise<void> {
-  const rows = queries.peerPresence();
+  const rows = queries.peerPresence(now - PEER_RETENTION_SECONDS);
   const reachableOf = (services: string | null): boolean | undefined => {
     for (const part of (services ?? "").split(",")) {
       const p = part.trim();
@@ -1439,7 +1442,17 @@ export async function updatePeers(
 
     let added = 0;
     let skippedUnreachable = 0;
+    let skippedStale = 0;
     for (const { entry, addr, sourceAddr, geoIp } of undiscovered) {
+      // Gossip often carries addresses last heard of weeks ago. They'd be
+      // pruned by deleteOldPeers below anyway, but upserting them first (with
+      // a rate-limited geolocation each) left them visible to /api/nodes for
+      // up to a minute -- a ~900 "Total Nodes" blip vs ~200 in the chart.
+      if (toNumberSafe(entry.time, now) < now - PEER_RETENTION_SECONDS) {
+        skippedStale++;
+        continue;
+      }
+
       const tested = testedSet.has(addr);
       const reachable = tested ? connectivity.get(addr) : undefined;
 
@@ -1487,13 +1500,12 @@ export async function updatePeers(
     }
 
     console.log(
-      `[peers] Discovered ${added} additional peers from direct P2P crawl (${discoveredPeers.length} known, crawl reachable ${crawlReachable}, skipped ${skippedUnreachable})`
+      `[peers] Discovered ${added} additional peers from direct P2P crawl (${discoveredPeers.length} known, crawl reachable ${crawlReachable}, skipped ${skippedUnreachable} unreachable / ${skippedStale} stale)`
     );
 
     queries.compactPeersByAddress();
 
-    const cutoff = now - 7 * 24 * 60 * 60;
-    queries.deleteOldPeers(cutoff);
+    queries.deleteOldPeers(now - PEER_RETENTION_SECONDS);
 
     await recordNodeSnapshot(queries, network, Math.floor(Date.now() / 1000));
 

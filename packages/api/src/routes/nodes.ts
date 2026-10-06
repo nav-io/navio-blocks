@@ -233,6 +233,15 @@ async function dedupePeersByCanonicalAddress(peers: Peer[]): Promise<Peer[]> {
   return Array.from(deduped.values()).sort((a, b) => b.last_seen - a.last_seen);
 }
 
+/**
+ * Same 7-day retention the indexer prunes with. Filtering here too keeps the
+ * live counts consistent with the node_stats snapshots even if stale rows are
+ * momentarily present mid-crawl.
+ */
+function peerCutoff(): number {
+  return Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
+}
+
 /** Lookback window and bucket size per chart period. */
 const HISTORY_WINDOWS: Record<ChartPeriod, { span: number; bucket: number }> = {
   '24h': { span: 86400, bucket: 1800 },          // 30 min (crawl runs every 10 min)
@@ -389,7 +398,9 @@ export default async function nodesRoutes(app: FastifyInstance) {
          FROM peers
          GROUP BY addr
        )
-       ORDER BY p.last_seen DESC`
+       AND p.last_seen >= ?
+       ORDER BY p.last_seen DESC`,
+      peerCutoff(),
     );
     const dedupedPeers = await dedupePeersByCanonicalAddress(peersByAddress);
     const peers: Peer[] = dedupedPeers.map((peer) => ({
@@ -509,8 +520,10 @@ export default async function nodesRoutes(app: FastifyInstance) {
          FROM peers
          GROUP BY addr
        )
+       AND p.last_seen >= ?
        AND p.lat IS NOT NULL
        AND p.lon IS NOT NULL`,
+      peerCutoff(),
     );
 
     // Collapse rows sharing an IP (differing only by ephemeral source port) to

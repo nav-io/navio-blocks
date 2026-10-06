@@ -507,7 +507,7 @@ export class Queries {
       `DELETE FROM node_stats WHERE network = ? AND timestamp < ?`
     );
     this.stmtPeerPresence = db.prepare(
-      `SELECT addr, services, last_seen, last_handshake FROM peers`
+      `SELECT addr, services, last_seen, last_handshake FROM peers WHERE last_seen >= ?`
     );
     // Unspent staked commitments in the explorer index, split by delegation.
     this.stmtStakeCommitmentCounts = db.prepare(`
@@ -1071,14 +1071,14 @@ export class Queries {
     this.stmtPruneNodeStats.run(snapshot.network, cutoff);
   }
 
-  /** Minimal per-peer presence fields used to count nodes. */
-  peerPresence(): {
+  /** Minimal per-peer presence fields used to count nodes, seen since `sinceTs`. */
+  peerPresence(sinceTs: number): {
     addr: string;
     services: string | null;
     last_seen: number;
     last_handshake: number | null;
   }[] {
-    return this.stmtPeerPresence.all() as {
+    return this.stmtPeerPresence.all(sinceTs) as {
       addr: string;
       services: string | null;
       last_seen: number;
